@@ -1,0 +1,248 @@
+#!/bin/bash -e
+LIBPATH=/usr/libexec
+source $LIBPATH/mitac-common-functions
+
+PLATFORM_COMPACT_NAME="com.mitac.Hardware.Chassis.Model.C810Z5"
+MB_LIB_PATH="$LIBPATH/plat-svc/$PLATFORM_COMPACT_NAME"
+source $MB_LIB_PATH/mainboard_env.sh
+ASSERT_FUNCTION_EXIST get_mac_addr_from_fru
+
+KERNEL_DTS_FN=aspeed-bmc-mitac-c810z5
+FDFFILE="conf-$KERNEL_DTS_FN.dtb"
+
+DO_REBOOT=0
+
+
+init-uboot() {
+    echo "mainboard-init-functions: init-uboot ($VER)"
+    # BOOTCMD="mw.l 0x1e6e251c 00001d00; run bootspi"
+    BOOTCMD="run bootspi"
+    refresh-uboot-arg bootcmd "$BOOTCMD"
+    refresh-uboot-arg fdtfile "$FDFFILE"
+    refresh-uboot-arg port80_snoop "yes"
+
+    # To make booting with selected DTB configuration.
+    # To avoid bmc hung at u-boot due to incorrect config from upgrade and downgrade of firmware, default option is mandatory.
+    BOOTSPI="fdt addr 20100000 && fdt header get fitsize totalsize && cp.b 20100000 \${loadaddr} \${fitsize} && bootm \${loadaddr}#\${fdtfile}; echo Booting with default DTB; bootm; echo Error loading kernel FIT image"
+    refresh-uboot-arg bootspi "$BOOTSPI"
+
+    echo "Update MAC Address if necessary."
+    set +e
+    update_mac 0 ethaddr
+    update_mac 1 eth1addr
+    set -e
+
+    if [ "$DO_REBOOT" == 1 ]; then
+        log_oem_redfish_event \
+            "Reboot to make new u-boot args working." \
+            6 3 \
+            "OpenBMC.0.1.MiOBMC" \
+            "" ""
+        fw_setenv profile "$PROFILE_ID"
+        reboot
+    fi
+}
+
+init-kernel() {
+    echo "mainboard-init-functions: init-kernel ($VER)"
+}
+
+init-i2c0() {
+    BUS=i2c-0
+    NEW_DEV=/sys/bus/i2c/devices/$BUS/new_device
+
+    echo "C2810Z5 Devices"
+    #echo "Init ??"
+    #echo "?? 0x48" > $NEW_DEV
+    echo "Init U48"
+    echo "pca9546 0x70" > $NEW_DEV
+    echo "Init U110"
+    echo "pca9546 0x71" > $NEW_DEV
+    echo "Init U52"
+    echo "pca9546 0x76" > $NEW_DEV
+}
+
+init-i2c2() {
+    BUS=i2c-2
+    NEW_DEV=/sys/bus/i2c/devices/$BUS/new_device
+
+    echo "C2810Z5 Devices"
+    echo "Init ??"
+    echo "pca9546 0x70" > $NEW_DEV
+}
+
+init-i2c6() {
+    I2CID=6
+    BUS=i2c-$I2CID
+    NEW_DEV=/sys/bus/i2c/devices/$BUS/new_device
+
+    echo "C2810Z5 Devices"
+    #echo "Init ??"
+    #echo "?? 0x4c" > $NEW_DEV
+    echo "Init U17101"
+    echo "pca9546 0x71" > $NEW_DEV
+
+    echo "IO Board Devices"
+    echo "Init U17103"
+    echo "pca9546 0x70" > $NEW_DEV
+
+    NEW_DEV_X550=/sys/bus/i2c/devices/6-0070/channel-0/new_device
+    echo "Init U44"
+    echo "tmp411 0x4c" > $NEW_DEV_X550
+}
+
+init-i2c8() {
+    BUS=i2c-8
+    NEW_DEV=/sys/bus/i2c/devices/$BUS/new_device
+
+    echo "C2810Z5 Devices"
+    echo "Init U95"
+    echo "pca9534 0x38" > $NEW_DEV
+    echo "Init U94"
+    echo "pca9538 0x71" > $NEW_DEV
+    echo "Init U1_LDL"
+    echo "pca9539 0x74" > $NEW_DEV
+    echo "Init U2_LDL"
+    echo "pca9539 0x75" > $NEW_DEV
+    echo "Init U3_LDL"
+    echo "pca9539 0x76" > $NEW_DEV
+    echo "Init U4_LDL"
+    echo "pca9539 0x77" > $NEW_DEV
+
+    echo "IO Board Devices"
+    echo "24c02 0x51" > $NEW_DEV
+    echo "tmp75 0x4b" > $NEW_DEV
+}
+
+init-i2c14() {
+    BUS=i2c-14
+    NEW_DEV=/sys/bus/i2c/devices/$BUS/new_device
+
+    echo "C2810Z5 Assets"
+    echo "Init U40"
+    echo "nct7904 0x2e" > $NEW_DEV
+}
+
+init-bpe0() {
+    NEW_DEV=/sys/bus/i2c/devices/i2c-7/new_device
+    echo "pca9546 0x70" > $NEW_DEV
+    NEW_DEV=/sys/bus/i2c/devices/i2c-6/new_device
+    echo "pca9546 0x76" > $NEW_DEV
+}
+
+init-bpe1() {
+    NEW_DEV=/sys/bus/i2c/devices/i2c-0/new_device
+    echo "pca9546 0x70" > $NEW_DEV
+    NEW_DEV=/sys/bus/i2c/devices/i2c-0/new_device
+    echo "pca9546 0x76" > $NEW_DEV
+}
+
+init-bpe2() {
+    NEW_DEV=/sys/bus/i2c/devices/i2c-6/new_device
+    echo "pca9546 0x77" > $NEW_DEV
+    NEW_DEV=/sys/bus/i2c/devices/i2c-7/new_device
+    echo "pca9546 0x76" > $NEW_DEV
+}
+
+init-fancb-max31790() {
+    set +e
+    # MAX31790
+    FanConfReg=("0x02" "0x03" "0x04" "0x05" "0x06" "0x07")
+    FanConfVal=("0x08" "0x09" "0x08" "0x08" "0x09" "0x08")
+
+    FanBus="11"
+
+    I2cSet="i2cset -f -y "
+    I2cGet="i2cget -f -y "
+
+    FanCtrlAddrs=(0x28 0x2c)
+
+    for FanAddr in "${FanCtrlAddrs[@]}"; do
+        echo $FanAddr>/sys/bus/i2c/devices/i2c-$FanBus/delete_device
+        for i in "${!FanConfReg[@]}"; do
+            cmd="$I2cSet $FanBus $FanAddr ${FanConfReg[i]} ${FanConfVal[i]}"
+            $cmd
+        done
+        echo "max31790 $FanAddr">/sys/bus/i2c/devices/i2c-$FanBus/new_device
+    done
+
+    sleep 1
+    mapfile array < <(ls /sys/bus/i2c/devices/11-002?/hwmon/*/pwm?)
+    for i in "${array[@]}"
+    do
+        echo $i
+        sh -c "echo '10'>$i"
+    done
+    set -e
+
+}
+
+init-fancb-nct7363() {
+    set +e
+    # MAX31790
+    FanConfReg=("0x20" "0x21" "0x22" "0x23" "0x38" "0x39" "0x41" "0x42")
+    FanConfVal=("0x29" "0x29" "0x29" "0x29" "0x11" "0x11" "0x66" "0x66")
+
+    FanBus="11"
+
+    I2cSet="i2cset -f -y "
+    I2cGet="i2cget -f -y "
+
+    FanCtrlAddrs=(0x21 0x22)
+
+    for FanAddr in "${FanCtrlAddrs[@]}"; do
+        echo $FanAddr>/sys/bus/i2c/devices/i2c-$FanBus/delete_device
+        for i in "${!FanConfReg[@]}"; do
+            cmd="$I2cSet $FanBus $FanAddr ${FanConfReg[i]} ${FanConfVal[i]}"
+            $cmd
+        done
+        # Currently NCT7363 doesn't support operations using SYSFS.
+        echo "nct7363 $FanAddr">/sys/bus/i2c/devices/i2c-$FanBus/new_device
+    done
+
+    sleep 1
+    mapfile array < <(ls /sys/bus/i2c/devices/11-002?/hwmon/*/pwm?)
+    for i in "${array[@]}"
+    do
+        echo $i
+        sh -c "echo '10'>$i"
+    done
+    set -e
+
+}
+
+init-fancb() {
+    gpioset 0 137=1
+    sleep 1
+    init-fancb-max31790
+    init-fancb-nct7363
+    #gpioset 0 137=1
+}
+
+init-peripheral() {
+    echo "mainboard-init-functions: init-peripheral ($VER)"
+    # init-i2c0
+    #init-i2c2
+    #init-i2c6
+    #init-i2c8
+    #init-i2c14
+    #init-bpe0
+    #init-bpe1
+    #init-bpe2
+    #init-fancb
+}
+
+init-service() {
+    echo "mainboard-init-functions: init-service ($VER)"
+    get_platform_id PLATFORM_ID
+    PLATFORM_SHORT_ID=${PLATFORM_ID::6}
+    PLATFORM_COMPACT_NAME="com.mitac.Hardware.Chassis.Model.$PLATFORM_SHORT_ID"
+    ln -s $LIBPATH/plat-svc/$PLATFORM_COMPACT_NAME/mainboard_env.sh /tmp/mainboard_env.sh
+
+    # Create symbolic link according to system.
+    # ln -s $LIBPATH/plat-svc/$PLATFORM_COMPACT_NAME/MRD_default.json /tmp/MRD_System.json
+    # ln -s $LIBPATH/plat-svc/$PLATFORM_COMPACT_NAME/MRD_C2810Z5.json /tmp/MRD_System.json
+
+    # source $LIBPATH/plat-svc/$PLATFORM_COMPACT_NAME/spd_link.sh
+
+}

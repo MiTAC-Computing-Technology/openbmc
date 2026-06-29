@@ -1,0 +1,28 @@
+From d21be06a21d3c60601d6063ba66b2494b8ac76ba Mon Sep 17 00:00:00 2001
+From: "fredy.chen" <fredy.chen@mitaccomputing.com>
+Date: Mon, 1 Jun 2026 03:29:06 -0400
+Subject: [PATCH] Modify get device sdr interface privilage
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ ipmi-allowlist.conf | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ipmi-allowlist.conf b/ipmi-allowlist.conf
+index ca5be0e..d1e4e9c 100644
+--- a/ipmi-allowlist.conf
++++ b/ipmi-allowlist.conf
+@@ -22,8 +22,8 @@
+ 0x04:0x15:0xff7f   //<Sensor/Event>:<PEF Get Processed EventID>
+ 0x04:0x16:0x7f7f   //<Sensor/Event>:<Alert Immediate>
+ 0x04:0x17:0x7f7f   //<Sensor/Event>:<PET Acknowledge>
+-0x04:0x20:0xff7f   //<Sensor/Event>:<Get Device SDR Info>
+-0x04:0x21:0xff7f   //<Sensor/Event>:<Get Device SDR>
++0x04:0x20:0xffe1   //<Sensor/Event>:<Get Device SDR Info>
++0x04:0x21:0xffe1   //<Sensor/Event>:<Get Device SDR>
+ 0x04:0x23:0xff7f   //<Sensor/Event>:<Get Sensor Reading Factors>
+ 0x04:0x24:0x7f7f   //<Sensor/Event>:<Set Sensor Hysteresis>
+ 0x04:0x25:0xff7f   //<Sensor/Event>:<Get Sensor Hysteresis>
+-- 
+2.34.1
+

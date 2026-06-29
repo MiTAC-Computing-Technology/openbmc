@@ -1,0 +1,69 @@
+From 632b4ea6f38805a7ee31bd110b14dca083ef9e23 Mon Sep 17 00:00:00 2001
+From: "fredy.chen" <fredy.chen@mitaccomputing.com>
+Date: Wed, 27 May 2026 22:59:23 -0400
+Subject: [PATCH] Add miobmc firmware version regex
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/appcommands.cpp | 31 ++++++++++++++++++++++++++++++-
+ 1 file changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/src/appcommands.cpp b/src/appcommands.cpp
+index ffe5da6..33485cf 100644
+--- a/src/appcommands.cpp
++++ b/src/appcommands.cpp
+@@ -200,7 +200,7 @@ int getActiveSoftwareVersionInfo(ipmi::Context::ptr ctx,
+     return -1;
+ }
+ 
+-// Support both 2 solutions:
++// Support both 3 solutions:
+ // 1.Current solution  2.7.0-dev-533-g14dc00e79-5e7d997
+ //   openbmcTag  2.7.0-dev
+ //   BuildNo     533
+@@ -214,6 +214,12 @@ int getActiveSoftwareVersionInfo(ipmi::Context::ptr ctx,
+ //   buildNo      3
+ //   MetaHash     ab3500
+ //   openbmcHash  38384ac
++//
++// 3. Miobmc solution 2.18.0-556-g2d45f2c045 or 2.18.0-556-g2d45f2c045-dirty
++//   openbmcTag  2.18.0
++//   BuildNo     556
++//   openbmcHash 2d45f2c045
++//   MetaHash    2d45f2c045
+ std::optional<MetaRevision> convertIntelVersion(std::string& s)
+ {
+     std::smatch results;
+@@ -265,6 +271,29 @@ std::optional<MetaRevision> convertIntelVersion(std::string& s)
+             return rev;
+         }
+     }
++    // Pattern 3: major.minor.patch-buildNo-ghash[-dirty]
++    constexpr size_t matchedMiobmc = 5;
++    std::regex pattern3("(\\d+?).(\\d+?).\\d+?-(\\d+?)-g(\\w+?)(?:-dirty)?");
++    if (std::regex_match(s, results, pattern3))
++    {
++        if (results.size() == matchedMiobmc)
++        {
++            rev.platform = "whtref";
++            rev.major = static_cast<uint8_t>(std::stoi(results[1]));
++            rev.minor = static_cast<uint8_t>(std::stoi(results[2]));
++            rev.buildNo = static_cast<uint32_t>(std::stoi(results[3]));
++            rev.openbmcHash = results[4];
++            rev.metaHash = results[4];
++            std::string versionString =
++                rev.platform + ":" + std::to_string(rev.major) + ":" +
++                std::to_string(rev.minor) + ":" + std::to_string(rev.buildNo) +
++                ":" + rev.openbmcHash + ":" + rev.metaHash;
++            phosphor::logging::log<phosphor::logging::level::INFO>(
++                "Get BMC version",
++                phosphor::logging::entry("VERSION=%s", versionString.c_str()));
++            return rev;
++        }
++    }
+ 
+     return std::nullopt;
+ }
+-- 
+2.34.1
+

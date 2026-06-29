@@ -1,0 +1,29 @@
+From a3358a9342225772b4a07e8d2e040fc6d2359c03 Mon Sep 17 00:00:00 2001
+From: "fredy.chen" <fredy.chen@mitaccomputing.com>
+Date: Wed, 10 Jun 2026 03:22:59 -0400
+Subject: [PATCH] Reject set IP source to unspecified
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ transporthandler.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/transporthandler.cpp b/transporthandler.cpp
+index 943c02f..a3e664b 100644
+--- a/transporthandler.cpp
++++ b/transporthandler.cpp
+@@ -861,10 +861,10 @@ RspType<> setLanInt(Context::ptr ctx, uint4_t channelBits, uint4_t reserved1,
+                     // subcommand.
+                     channelCall<setEthProp<bool>>(channel, "DHCP4", true);
+                     return responseSuccess();
+-                case IPSrc::Unspecified:
+                 case IPSrc::Static:
+                     channelCall<setEthProp<bool>>(channel, "DHCP4", false);
+                     return responseSuccess();
++                case IPSrc::Unspecified:
+                 case IPSrc::BIOS:
+                 case IPSrc::BMC:
+                     return responseInvalidFieldRequest();
+-- 
+2.34.1
+

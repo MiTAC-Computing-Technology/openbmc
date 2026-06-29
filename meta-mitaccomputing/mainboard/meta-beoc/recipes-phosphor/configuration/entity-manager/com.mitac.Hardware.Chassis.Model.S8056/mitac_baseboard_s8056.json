@@ -94,7 +94,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 9,
       "Name": "Baseboard P12V VOLT_V",
       "PowerState": "On",
@@ -141,7 +141,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 10,
       "Name": "Baseboard P5V VOLT_V",
       "PowerState": "On",
@@ -188,7 +188,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 11,
       "Name": "Baseboard P3V3 VOLT_V",
       "PowerState": "On",
@@ -235,7 +235,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 12,
       "Name": "Baseboard P3V3_AUX VOLT_V",
       "ScaleFactor": 0.405241935,
@@ -281,7 +281,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 13,
       "Name": "Baseboard P1V8_PCH VOLT_V",
       "ScaleFactor": 0.740740741,
@@ -315,7 +315,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 14,
       "Name": "Baseboard PVNN VOLT_V",
       "ScaleFactor": 1,
@@ -323,7 +323,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 15,
       "Name": "Baseboard P1V2 VOLT_V",
       "ScaleFactor": 1,
@@ -357,7 +357,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 0,
       "Name": "Baseboard PVCCP_P0 VOLT_V",
       "PowerState": "On",
@@ -366,7 +366,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 1,
       "Name": "Baseboard PVCCIO_P0 VOLT_V",
       "PowerState": "On",
@@ -375,7 +375,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 2,
       "Name": "Baseboard PVDDQ_P0 VOLT_V",
       "PowerState": "On",
@@ -384,7 +384,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 3,
       "Name": "Baseboard PVPP_P0 VOLT_V",
       "PowerState": "On",
@@ -393,7 +393,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 4,
       "Name": "Baseboard PVCCP_P1 VOLT_V",
       "PowerState": "On",
@@ -402,7 +402,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 5,
       "Name": "Baseboard PVCCIO_P1 VOLT_V",
       "PowerState": "On",
@@ -411,7 +411,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 6,
       "Name": "Baseboard PVDDQ_P1 VOLT_V",
       "PowerState": "On",
@@ -420,7 +420,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 8,
       "Name": "Baseboard PVPP_P1 VOLT_V",
       "PowerState": "On",
@@ -433,7 +433,7 @@
       "PowerState": "On",
       "Name": "CPU 0 TEMP_C",
       "EntityId": 3,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Thresholds": [
         {
           "Direction": "greater than",
@@ -543,7 +543,7 @@
   },
   "xyz.openbmc_project.Inventory.Decorator.Ipmi": {
     "EntityId": 7,
-    "EntityInstance": 0
+    "EntityInstance": 1
   },
   "xyz.openbmc_project.Inventory.Decorator.Revision": {
     "Version": "$PRODUCT_VERSION"

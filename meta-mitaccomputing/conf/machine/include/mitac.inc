@@ -22,7 +22,7 @@ DISTRO_FEATURES:append = " ldap"
 ####################
 
 # OBMC Phosphor
-IMAGE_INSTALL:append = "phosphor-led-sysfs elfutils phosphor-inventory-manager biosconfig-manager "
+IMAGE_INSTALL:append = "phosphor-led-sysfs elfutils phosphor-inventory-manager biosconfig-manager phosphor-dbus-monitor "
 # Mitac Common
 IMAGE_INSTALL:append = "mitac-common-functions plat-svc id-button early-vga mitac-dcm-telemetry infineon-vr-util "
 IMAGE_INSTALL:append = "mitac-mctp-pcie-vdm-core mitac-mctp-pcie-vdm-drivers "

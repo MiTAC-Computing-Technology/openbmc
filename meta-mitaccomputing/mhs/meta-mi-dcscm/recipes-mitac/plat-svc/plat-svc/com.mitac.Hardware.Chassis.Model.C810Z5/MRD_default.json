@@ -1,0 +1,111 @@
+{
+  "MitacMRD": [
+    {
+      "Id": "Dashboard_Baseboard_Voltages",
+      "Metrics": [
+        {
+          "MetricProperties": [
+          ]
+        }
+      ],
+      "MetricReportDefinitionType": "Periodic",
+      "ReportActions": [
+        "RedfishEvent",
+        "LogToMetricReportsCollection"
+      ],
+      "Schedule": {
+        "RecurrenceInterval": "PT1S"
+      },
+      "ReportUpdates": "AppendWrapsWhenFull"
+    },
+    {
+      "Id": "Dashboard_CPU_Temperatures",
+      "Metrics": [
+        {
+          "MetricProperties": [
+          ]
+        }
+      ],
+      "MetricReportDefinitionType": "Periodic",
+      "ReportActions": [
+        "RedfishEvent",
+        "LogToMetricReportsCollection"
+      ],
+      "Schedule": {
+        "RecurrenceInterval": "PT1S"
+      },
+      "ReportUpdates": "AppendWrapsWhenFull"
+    },
+    {
+      "Id": "Dashboard_DIMM_Temperatures",
+      "Metrics": [
+        {
+          "MetricProperties": [
+          ]
+        }
+      ],
+      "MetricReportDefinitionType": "Periodic",
+      "ReportActions": [
+        "RedfishEvent",
+        "LogToMetricReportsCollection"
+      ],
+      "Schedule": {
+        "RecurrenceInterval": "PT1S"
+      },
+      "ReportUpdates": "AppendWrapsWhenFull"
+    },
+    {
+      "Id": "Dashboard_PSU_Power",
+      "Metrics": [
+        {
+          "MetricProperties": [
+          ]
+        }
+      ],
+      "MetricReportDefinitionType": "Periodic",
+      "ReportActions": [
+        "RedfishEvent",
+        "LogToMetricReportsCollection"
+      ],
+      "Schedule": {
+        "RecurrenceInterval": "PT1S"
+      },
+      "ReportUpdates": "AppendWrapsWhenFull"
+    },
+    {
+      "Id": "Dashboard_Drive_Temperatures",
+      "Metrics": [
+        {
+          "MetricProperties": [
+          ]
+        }
+      ],
+      "MetricReportDefinitionType": "Periodic",
+      "ReportActions": [
+        "RedfishEvent",
+        "LogToMetricReportsCollection"
+      ],
+      "Schedule": {
+        "RecurrenceInterval": "PT1S"
+      },
+      "ReportUpdates": "AppendWrapsWhenFull"
+    },
+    {
+      "Id": "Dashboard_Drive_PDLU",
+      "Metrics": [
+        {
+          "MetricProperties": []
+        }
+      ],
+      "MetricReportDefinitionType": "Periodic",
+      "ReportActions": [
+        "RedfishEvent",
+        "LogToMetricReportsCollection"
+      ],
+      "Schedule": {
+        "RecurrenceInterval": "PT1H"
+      },
+      "ReportUpdates": "AppendWrapsWhenFull"
+    }
+  ]
+}

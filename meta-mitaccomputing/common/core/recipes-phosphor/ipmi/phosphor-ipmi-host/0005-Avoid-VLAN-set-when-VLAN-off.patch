@@ -1,0 +1,35 @@
+From b457d5f5610895cc50d0a212ef53e0d820b65cc0 Mon Sep 17 00:00:00 2001
+From: "fredy.chen" <fredy.chen@mitaccomputing.com>
+Date: Tue, 9 Jun 2026 21:39:35 -0400
+Subject: [PATCH] Avoid VLAN set when VLAN off
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ transporthandler.cpp | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/transporthandler.cpp b/transporthandler.cpp
+index d99c754..943c02f 100644
+--- a/transporthandler.cpp
++++ b/transporthandler.cpp
+@@ -606,9 +606,14 @@ void reconfigureVLAN(sdbusplus::bus_t& bus, ChannelParams& params,
+     createVLAN(bus, params, vlan);
+ 
+     // Re-establish the saved settings
+-    setEthProp(bus, parentIntParams, "DHCP4", dhcp4);
+-    setEthProp(bus, parentIntParams, "DHCP6", dhcp6);
+-    setEthProp(bus, parentIntParams, "IPv6AcceptRA", ra);
++    if (vlan != 0){
++        // The previous logical interface still exists only when moving to another
++        // VLAN. When VLAN is disabled, deconfigureChannel() deletes the old VLAN
++        // object, so parentIntParams.logicalPath is stale.
++        setEthProp(bus, parentIntParams, "DHCP4", dhcp4);
++        setEthProp(bus, parentIntParams, "DHCP6", dhcp6);
++        setEthProp(bus, parentIntParams, "IPv6AcceptRA", ra);
++    }
+ 
+     setEthProp(bus, params, "DHCP4", dhcp4);
+     setEthProp(bus, params, "DHCP6", dhcp6);
+-- 
+2.34.1
+

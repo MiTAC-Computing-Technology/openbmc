@@ -1,0 +1,472 @@
+From 2461ada714b48ea9dbb9191876e1d1f593b0cfb9 Mon Sep 17 00:00:00 2001
+From: "fredy.chen" <fredy.chen@mitaccomputing.com>
+Date: Tue, 26 May 2026 22:26:35 -0400
+Subject: [PATCH] Remove ChannelAccess synchronization methods
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ user_channel/channel_mgmt.cpp | 313 +---------------------------------
+ user_channel/channel_mgmt.hpp |  40 -----
+ 2 files changed, 2 insertions(+), 351 deletions(-)
+
+diff --git a/user_channel/channel_mgmt.cpp b/user_channel/channel_mgmt.cpp
+index e3658eb..3e8f297 100644
+--- a/user_channel/channel_mgmt.cpp
++++ b/user_channel/channel_mgmt.cpp
+@@ -47,20 +47,6 @@ static constexpr const char* channelNvDataFilename =
+ static constexpr const char* channelVolatileDataFilename =
+     "/run/ipmi/channel_access_volatile.json";
+ 
+-// TODO: Get the service name dynamically..
+-static constexpr const char* networkIntfServiceName =
+-    "xyz.openbmc_project.Network";
+-static constexpr const char* networkIntfObjectBasePath =
+-    "/xyz/openbmc_project/network";
+-static constexpr const char* networkChConfigIntfName =
+-    "xyz.openbmc_project.Channel.ChannelAccess";
+-static constexpr const char* privilegePropertyString = "MaxPrivilege";
+-static constexpr const char* dBusPropertiesInterface =
+-    "org.freedesktop.DBus.Properties";
+-static constexpr const char* propertiesChangedSignal = "PropertiesChanged";
+-static constexpr const char* interfaceAddedSignal = "InterfacesAdded";
+-static constexpr const char* interfaceRemovedSignal = "InterfacesRemoved";
+-
+ // STRING DEFINES: Should sync with key's in JSON
+ static constexpr const char* nameString = "name";
+ static constexpr const char* isValidString = "is_valid";
+@@ -91,15 +77,6 @@ static constexpr const uint8_t defaultAuthType =
+ static constexpr const bool defaultIsIpmiState = false;
+ static constexpr size_t smallChannelSize = 64;
+ 
+-std::unique_ptr<sdbusplus::bus::match_t> chPropertiesSignal
+-    __attribute__((init_priority(101)));
+-
+-std::unique_ptr<sdbusplus::bus::match_t> chInterfaceAddedSignal
+-    __attribute__((init_priority(101)));
+-
+-std::unique_ptr<sdbusplus::bus::match_t> chInterfaceRemovedSignal
+-    __attribute__((init_priority(101)));
+-
+ // String mappings use in JSON config file
+ static std::unordered_map<std::string, EChannelMediumType> mediumTypeMap = {
+     {"reserved", EChannelMediumType::reserved},
+@@ -174,128 +151,13 @@ int ChannelConfig::convertToChannelNumberFromChannelName(
+     return -1;
+ }
+ 
+-std::string ChannelConfig::getChannelNameFromPath(const std::string& path)
+-{
+-    const size_t length = strlen(networkIntfObjectBasePath);
+-    if (((length + 1) >= path.size()) ||
+-        path.compare(0, length, networkIntfObjectBasePath))
+-    {
+-        lg2::error("Invalid object path: {PATH}", "PATH", path);
+-        throw std::invalid_argument("Invalid object path");
+-    }
+-    std::string chName(path, length + 1);
+-    return chName;
+-}
+-
+-void ChannelConfig::processChAccessPropChange(
+-    const std::string& path, const DbusChObjProperties& chProperties)
+-{
+-    // Get interface name from path. ex: '/xyz/openbmc_project/network/eth0'
+-    std::string chName;
+-    try
+-    {
+-        chName = getChannelNameFromPath(path);
+-    }
+-    catch (const std::invalid_argument& e)
+-    {
+-        lg2::error("Exception: {MSG}", "MSG", e.what());
+-        return;
+-    }
+-
+-    // Get the MaxPrivilege property value from the signal
+-    std::string intfPrivStr;
+-    std::string propName;
+-    for (const auto& prop : chProperties)
+-    {
+-        if (prop.first == privilegePropertyString)
+-        {
+-            propName = privilegePropertyString;
+-            intfPrivStr = std::get<std::string>(prop.second);
+-            break;
+-        }
+-    }
+-
+-    if (propName != privilegePropertyString)
+-    {
+-        lg2::error("Unknown signal caught.");
+-        return;
+-    }
+-
+-    if (intfPrivStr.empty())
+-    {
+-        lg2::error("Invalid privilege string for intf {INTF}", "INTF", chName);
+-        return;
+-    }
+-
+-    uint8_t intfPriv = 0;
+-    int chNum;
+-    try
+-    {
+-        intfPriv = static_cast<uint8_t>(convertToPrivLimitIndex(intfPrivStr));
+-        chNum = convertToChannelNumberFromChannelName(chName);
+-    }
+-    catch (const std::invalid_argument& e)
+-    {
+-        lg2::error("Exception: {MSG}", "MSG", e.what());
+-        return;
+-    }
+-
+-    boost::interprocess::scoped_lock<boost::interprocess::named_recursive_mutex>
+-        channelLock{*channelMutex};
+-    // skip updating the values, if this property change originated from IPMI.
+-    if (signalFlag & (1 << chNum))
+-    {
+-        signalFlag &= ~(1 << chNum);
+-        lg2::debug("Request originated from IPMI so ignoring signal");
+-        return;
+-    }
+-
+-    // Update both volatile & Non-volatile, if there is mismatch.
+-    // as property change other than IPMI, has to update both volatile &
+-    // non-volatile data.
+-    checkAndReloadVolatileData();
+-    checkAndReloadNVData();
+-    if (channelData[chNum].chAccess.chNonVolatileData.privLimit != intfPriv)
+-    {
+-        // Update NV data
+-        channelData[chNum].chAccess.chNonVolatileData.privLimit = intfPriv;
+-        if (writeChannelPersistData() != 0)
+-        {
+-            lg2::error("Failed to update the persist data file");
+-            return;
+-        }
+-
+-        // Update Volatile data
+-        if (channelData[chNum].chAccess.chVolatileData.privLimit != intfPriv)
+-        {
+-            channelData[chNum].chAccess.chVolatileData.privLimit = intfPriv;
+-            if (writeChannelVolatileData() != 0)
+-            {
+-                lg2::error("Failed to update the volatile data file");
+-                return;
+-            }
+-        }
+-    }
+-
+-    return;
+-}
+-
+ ChannelConfig& getChannelConfigObject()
+ {
+     static ChannelConfig channelConfig;
+     return channelConfig;
+ }
+ 
+-ChannelConfig::~ChannelConfig()
+-{
+-    if (signalHndlrObjectState)
+-    {
+-        chPropertiesSignal.reset();
+-        chInterfaceAddedSignal.reset();
+-        chInterfaceRemovedSignal.reset();
+-        sigHndlrLock.unlock();
+-    }
+-}
++ChannelConfig::~ChannelConfig() = default;
+ 
+ ChannelConfig::ChannelConfig() : bus(ipmid_get_sd_bus_connection())
+ {
+@@ -327,47 +189,6 @@ ChannelConfig::ChannelConfig() : bus(ipmid_get_sd_bus_connection())
+     }
+ 
+     initChannelPersistData();
+-
+-    sigHndlrLock = boost::interprocess::file_lock(channelNvDataFilename);
+-    // Register it for single object and single process either netipmid /
+-    // host-ipmid
+-    if (chPropertiesSignal == nullptr && sigHndlrLock.try_lock())
+-    {
+-        lg2::debug("Registering channel signal handler.");
+-        chPropertiesSignal = std::make_unique<sdbusplus::bus::match_t>(
+-            bus,
+-            sdbusplus::bus::match::rules::path_namespace(
+-                networkIntfObjectBasePath) +
+-                sdbusplus::bus::match::rules::type::signal() +
+-                sdbusplus::bus::match::rules::member(propertiesChangedSignal) +
+-                sdbusplus::bus::match::rules::interface(
+-                    dBusPropertiesInterface) +
+-                sdbusplus::bus::match::rules::argN(0, networkChConfigIntfName),
+-            [&](sdbusplus::message_t& msg) {
+-                DbusChObjProperties props;
+-                std::string iface;
+-                std::string path = msg.get_path();
+-                msg.read(iface, props);
+-                processChAccessPropChange(path, props);
+-            });
+-        signalHndlrObjectState = true;
+-
+-        chInterfaceAddedSignal = std::make_unique<sdbusplus::bus::match_t>(
+-            bus,
+-            sdbusplus::bus::match::rules::type::signal() +
+-                sdbusplus::bus::match::rules::member(interfaceAddedSignal) +
+-                sdbusplus::bus::match::rules::argNpath(
+-                    0, std::string(networkIntfObjectBasePath) + "/"),
+-            [&](sdbusplus::message_t&) { initChannelPersistData(); });
+-
+-        chInterfaceRemovedSignal = std::make_unique<sdbusplus::bus::match_t>(
+-            bus,
+-            sdbusplus::bus::match::rules::type::signal() +
+-                sdbusplus::bus::match::rules::member(interfaceRemovedSignal) +
+-                sdbusplus::bus::match::rules::argNpath(
+-                    0, std::string(networkIntfObjectBasePath) + "/"),
+-            [&](sdbusplus::message_t&) { initChannelPersistData(); });
+-    }
+ }
+ 
+ bool ChannelConfig::isValidChannel(const uint8_t chNum)
+@@ -629,27 +450,6 @@ Cc ChannelConfig::setChannelAccessPersistData(const uint8_t chNum,
+     }
+     if (setFlag & setPrivLimit)
+     {
+-        // Send Update to network channel config interfaces over dbus
+-        std::string privStr = convertToPrivLimitString(chAccessData.privLimit);
+-        std::string networkIntfObj = std::string(networkIntfObjectBasePath) +
+-                                     "/" + channelData[chNum].chName;
+-        try
+-        {
+-            if (0 != setDbusProperty(networkIntfServiceName, networkIntfObj,
+-                                     networkChConfigIntfName,
+-                                     privilegePropertyString, privStr))
+-            {
+-                lg2::debug("Network interface '{INTERFACE}' does not exist",
+-                           "INTERFACE", channelData[chNum].chName);
+-                return ccUnspecifiedError;
+-            }
+-        }
+-        catch (const sdbusplus::exception_t& e)
+-        {
+-            lg2::error("Exception: Network interface does not exist");
+-            return ccInvalidFieldRequest;
+-        }
+-        signalFlag |= (1 << chNum);
+         channelData[chNum].chAccess.chNonVolatileData.privLimit =
+             chAccessData.privLimit;
+     }
+@@ -657,7 +457,7 @@ Cc ChannelConfig::setChannelAccessPersistData(const uint8_t chNum,
+     // Write persistent data to file
+     if (writeChannelPersistData() != 0)
+     {
+-        lg2::debug("Failed to update the presist data file");
++        lg2::error("Failed to update the presist data file");
+         return ccUnspecifiedError;
+     }
+     return ccSuccess;
+@@ -1289,105 +1089,6 @@ int ChannelConfig::checkAndReloadVolatileData()
+     return ret;
+ }
+ 
+-int ChannelConfig::setDbusProperty(
+-    const std::string& service, const std::string& objPath,
+-    const std::string& interface, const std::string& property,
+-    const DbusVariant& value)
+-{
+-    try
+-    {
+-        auto method =
+-            bus.new_method_call(service.c_str(), objPath.c_str(),
+-                                "org.freedesktop.DBus.Properties", "Set");
+-
+-        method.append(interface, property, value);
+-
+-        auto reply = bus.call(method);
+-    }
+-    catch (const sdbusplus::exception_t& e)
+-    {
+-        lg2::debug(
+-            "set-property {SERVICE}:{OBJPATH}/{INTERFACE}.{PROP} failed: {MSG}",
+-            "SERVICE", service, "OBJPATH", objPath, "INTERFACE", interface,
+-            "PROP", property, "MSG", e);
+-        return -EIO;
+-    }
+-
+-    return 0;
+-}
+-
+-int ChannelConfig::syncNetworkChannelConfig()
+-{
+-    boost::interprocess::scoped_lock<boost::interprocess::named_recursive_mutex>
+-        channelLock{*channelMutex};
+-    bool isUpdated = false;
+-    for (uint8_t chNum = 0; chNum < maxIpmiChannels; chNum++)
+-    {
+-        if (getChannelSessionSupport(chNum) != EChannelSessSupported::none)
+-        {
+-            std::string intfPrivStr;
+-            uint8_t intfPriv = 0;
+-            try
+-            {
+-                std::string networkIntfObj =
+-                    std::string(networkIntfObjectBasePath) + "/" +
+-                    channelData[chNum].chName;
+-                auto propValue = ipmi::getDbusProperty(
+-                    bus, networkIntfServiceName, networkIntfObj,
+-                    networkChConfigIntfName, privilegePropertyString);
+-
+-                intfPrivStr = std::get<std::string>(propValue);
+-                intfPriv =
+-                    static_cast<uint8_t>(convertToPrivLimitIndex(intfPrivStr));
+-            }
+-            catch (const std::bad_variant_access& e)
+-            {
+-                lg2::debug("Network interface '{INTERFACE}' does not exist",
+-                           "INTERFACE", channelData[chNum].chName);
+-                continue;
+-            }
+-            catch (const sdbusplus::exception_t& e)
+-            {
+-                lg2::debug("Network interface '{INTERFACE}' does not exist",
+-                           "INTERFACE", channelData[chNum].chName);
+-                continue;
+-            }
+-            catch (const std::invalid_argument& e)
+-            {
+-                lg2::debug("exception: Invalid privilege");
+-                continue;
+-            }
+-
+-            if (channelData[chNum].chAccess.chNonVolatileData.privLimit !=
+-                intfPriv)
+-            {
+-                isUpdated = true;
+-                channelData[chNum].chAccess.chNonVolatileData.privLimit =
+-                    intfPriv;
+-                channelData[chNum].chAccess.chVolatileData.privLimit = intfPriv;
+-            }
+-        }
+-    }
+-
+-    if (isUpdated)
+-    {
+-        // Write persistent data to file
+-        if (writeChannelPersistData() != 0)
+-        {
+-            lg2::debug("Failed to update the persistent data file");
+-            return -EIO;
+-        }
+-        // Write Volatile data to file
+-        if (writeChannelVolatileData() != 0)
+-        {
+-            lg2::debug("Failed to update the channel volatile data");
+-            return -EIO;
+-        }
+-    }
+-
+-    return 0;
+-}
+-
+ void ChannelConfig::initChannelPersistData()
+ {
+     boost::interprocess::scoped_lock<boost::interprocess::named_recursive_mutex>
+@@ -1434,16 +1135,6 @@ void ChannelConfig::initChannelPersistData()
+         }
+     }
+ 
+-    // Synchronize the channel config(priv) with network channel
+-    // configuration(priv) over dbus
+-    if (syncNetworkChannelConfig() != 0)
+-    {
+-        lg2::error(
+-            "Failed to synchronize data with network channel config over dbus");
+-        throw std::ios_base::failure(
+-            "Failed to synchronize data with network channel config over dbus");
+-    }
+-
+     lg2::debug("Successfully completed channel data initialization.");
+     return;
+ }
+diff --git a/user_channel/channel_mgmt.hpp b/user_channel/channel_mgmt.hpp
+index 5ec5a16..00808e6 100644
+--- a/user_channel/channel_mgmt.hpp
++++ b/user_channel/channel_mgmt.hpp
+@@ -246,7 +246,6 @@ class ChannelConfig
+     uint8_t getManagementNICID();
+ 
+   private:
+-    uint32_t signalFlag = 0;
+     std::unique_ptr<boost::interprocess::named_recursive_mutex> channelMutex{
+         nullptr};
+     std::array<ChannelProperties, maxIpmiChannels> channelData;
+@@ -254,8 +253,6 @@ class ChannelConfig
+     std::time_t voltFileLastUpdatedTime;
+     boost::interprocess::file_lock mutexCleanupLock;
+     sdbusplus::bus_t bus;
+-    bool signalHndlrObjectState = false;
+-    boost::interprocess::file_lock sigHndlrLock;
+ 
+     /** @brief function to initialize persistent channel configuration
+      *
+@@ -301,27 +298,6 @@ class ChannelConfig
+      */
+     int checkAndReloadVolatileData();
+ 
+-    /** @brief function to sync channel privilege with system network channel
+-     * privilege
+-     *
+-     *  @return 0 for success, -errno for failure.
+-     */
+-    int syncNetworkChannelConfig();
+-
+-    /** @brief function to set D-Bus property value
+-     *
+-     *  @param[in] service - service name
+-     *  @param[in] objPath - object path
+-     *  @param[in] interface - interface
+-     *  @param[in] property - property name
+-     *  @param[in] value - property value
+-     *
+-     *  @return 0 for success, -errno for failure.
+-     */
+-    int setDbusProperty(const std::string& service, const std::string& objPath,
+-                        const std::string& interface,
+-                        const std::string& property, const DbusVariant& value);
+-
+     /** @brief function to read json config file
+      *
+      *  @param[in] configFile - configuration file name
+@@ -398,15 +374,6 @@ class ChannelConfig
+      */
+     int convertToChannelNumberFromChannelName(const std::string& chName);
+ 
+-    /** @brief function to handle Channel access property update through the
+-     * D-Bus handler.
+-     *
+-     *  @param[in] path - D-Bus path to the network element (i.e. eth0)
+-     *  @param[in] chProperties - D-Bus channel properties
+-     */
+-    void processChAccessPropChange(const std::string& path,
+-                                   const DbusChObjProperties& chProperties);
+-
+     /** @brief function to retrieve last modification time for the named file
+      *
+      *  @param[in] fileName - the name of the file for which to acquire
+@@ -416,13 +383,6 @@ class ChannelConfig
+      */
+     std::time_t getUpdatedFileTime(const std::string& fileName);
+ 
+-    /** @brief function to convert the DBus path to a network channel name
+-     *
+-     *  @param[in] path - The DBus path to the device
+-     *
+-     *  @return network channel name (i.e. eth0)
+-     */
+-    std::string getChannelNameFromPath(const std::string& path);
+ };
+ 
+ } // namespace ipmi
+-- 
+2.34.1
+

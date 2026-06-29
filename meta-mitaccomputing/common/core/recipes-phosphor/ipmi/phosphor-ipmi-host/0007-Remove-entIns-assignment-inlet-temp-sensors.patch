@@ -1,0 +1,26 @@
+From d1ee65d5a67f5f9a0c7552d9864f3a21174cba7a Mon Sep 17 00:00:00 2001
+From: "fredy.chen" <fredy.chen@mitaccomputing.com>
+Date: Mon, 15 Jun 2026 02:50:11 -0400
+Subject: [PATCH] Remove default entityInstance assignment for Inlet
+ temperature sensors
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ dbus-sdr/sdrutils.cpp | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/dbus-sdr/sdrutils.cpp b/dbus-sdr/sdrutils.cpp
+index 4b42027..0845c20 100644
+--- a/dbus-sdr/sdrutils.cpp
++++ b/dbus-sdr/sdrutils.cpp
+@@ -657,7 +657,6 @@ void updateIpmiFromAssociation(
+                 if (sensorNameFromPath.contains("Inlet") && sensorNameFromPath.contains("_TEMP_C"))
+                 {
+                     entityId = 55;
+-                    entityInstance = 0;
+                 }
+                 continue;
+             }
+-- 
+2.34.1
+

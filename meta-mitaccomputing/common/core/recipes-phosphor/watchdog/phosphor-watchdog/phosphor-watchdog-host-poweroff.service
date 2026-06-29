@@ -1,7 +1,7 @@
 [Unit]
 Description=Shutdown Host Server
-Requires=xyz.openbmc_project.Chassis.Control.Power.service
-After=xyz.openbmc_project.Chassis.Control.Power.service
+Requires=xyz.openbmc_project.Chassis.Control.Power@0.service
+After=xyz.openbmc_project.Chassis.Control.Power@0.service
 
 [Service]
 Type=oneshot

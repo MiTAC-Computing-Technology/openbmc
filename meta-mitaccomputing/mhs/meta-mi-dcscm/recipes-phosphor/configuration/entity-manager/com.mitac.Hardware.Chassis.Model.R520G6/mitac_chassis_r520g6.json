@@ -212,6 +212,10 @@
       "Type": "PMBus Upstream Port"
     },
     {
+      "Name": "Fan Upstream Port",
+      "Type": "Fan Upstream Port"
+    },
+    {
       "Name": "Power Unit Redundancy",
       "RedundantCount": 1,
       "Type": "PURedundancy"
@@ -652,7 +656,9 @@
   "xyz.openbmc_project.Inventory.Item.NetworkInterface": {
     "MACAddress": "$CHASSIS_INFO_AM1"
   },
-  "xyz.openbmc_project.Inventory.Item.Chassis": {},
+  "xyz.openbmc_project.Inventory.Item.Chassis": {
+    "Type": "xyz.openbmc_project.Inventory.Item.Chassis.ChassisType.Enclosure"
+  },
   "xyz.openbmc_project.Inventory.Item.System": {},
   "xyz.openbmc_project.Inventory.Decorator.Ipmi": {
     "EntityId": 23,

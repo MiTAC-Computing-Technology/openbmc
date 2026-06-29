@@ -3,7 +3,7 @@
 #include "ast2600-u-boot.dtsi"
 
 / {
-	model = "AST2600 E7142 DCSCM";
+	model = "AST2600 DCSCM";
 	compatible = "aspeed,ast2600-evb", "aspeed,ast2600";
 
 	memory {

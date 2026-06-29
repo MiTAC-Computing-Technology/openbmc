@@ -66,7 +66,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 8,
       "Name": "Baseboard P12V VOLT_V",
       "PowerState": "On",
@@ -113,7 +113,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 9,
       "Name": "Baseboard P12V_AUX VOLT_V",
       "ScaleFactor": 0.112195122,
@@ -159,7 +159,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 10,
       "Name": "Baseboard P5V VOLT_V",
       "PowerState": "On",
@@ -206,7 +206,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 11,
       "Name": "Baseboard P3V3 VOLT_V",
       "PowerState": "On",
@@ -253,7 +253,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 12,
       "Name": "Baseboard P3V3_AUX VOLT_V",
       "ScaleFactor": 0.405241935,
@@ -299,7 +299,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 13,
       "Name": "Baseboard P1V8_BMC_AUX VOLT_V",
       "ScaleFactor": 0.740740741,
@@ -333,7 +333,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 0,
       "Name": "Baseboard PVCCP_P0 VOLT_V",
       "PowerState": "On",
@@ -342,7 +342,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 1,
       "Name": "Baseboard PVCCIO_P0 VOLT_V",
       "PowerState": "On",
@@ -351,7 +351,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 2,
       "Name": "Baseboard PVDDQ_P0 VOLT_V",
       "PowerState": "On",
@@ -360,7 +360,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 3,
       "Name": "Baseboard PVPP_P0 VOLT_V",
       "PowerState": "On",
@@ -369,7 +369,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 4,
       "Name": "Baseboard PVCCP_P1 VOLT_V",
       "PowerState": "On",
@@ -378,7 +378,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 5,
       "Name": "Baseboard PVCCIO_P1 VOLT_V",
       "PowerState": "On",
@@ -387,7 +387,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 6,
       "Name": "Baseboard PVDDQ_P1 VOLT_V",
       "PowerState": "On",
@@ -400,7 +400,7 @@
       "PowerState": "On",
       "Name": "CPU 0 TEMP_C",
       "EntityId": 3,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Thresholds": [
         {
           "Direction": "greater than",
@@ -787,7 +787,6 @@
       "ICoefficient": -4.64,
       "ILimitMax": 80,
       "ILimitMin": 8,
-      // Temporary solution to ramp up all fans for any GPU thermal condition.
       "Inputs": [
         "GPU [A-Za-z0-9 _]* TEMP_C"
       ],
@@ -904,12 +903,10 @@
       "Name": "Pid Zone Sys 5",
       "Type": "Pid.Zone"
     },
-    // DCMI reference System_Total_Power_PWR_W for power reading
     {
       "Name": "System_Total_Power_PWR_W",
       "MaxValue": 3000,
       "MinValue": 0,
-      // System_Total_Power_PWR_W is sum of PIN from PSUs.
       "Sensors": [
         "PSU_0_PIN_PWR_W",
         "PSU_1_PIN_PWR_W"
@@ -921,7 +918,6 @@
       "Name": "System_Total_Power_Capacity_PWR_W",
       "MaxValue": 6000,
       "MinValue": 0,
-      // System_Total_Power_Capacity_PWR_W is sum of MFR_POUT1_MAX from working PSUs.
       "Sensors": [
         "PSU_0_POUT1_CAP_PWR_W",
         "PSU_1_POUT1_CAP_PWR_W"
@@ -999,7 +995,7 @@
   },
   "xyz.openbmc_project.Inventory.Decorator.Ipmi": {
     "EntityId": 7,
-    "EntityInstance": 0
+    "EntityInstance": 1
   },
   "xyz.openbmc_project.Inventory.Decorator.Revision": {
     "Version": "$PRODUCT_VERSION"

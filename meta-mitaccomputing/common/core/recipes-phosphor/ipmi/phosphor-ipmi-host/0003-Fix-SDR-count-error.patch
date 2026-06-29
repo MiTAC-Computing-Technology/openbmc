@@ -1,0 +1,26 @@
+From ff78b9939fb36588d37fb647cd4c451407e12607 Mon Sep 17 00:00:00 2001
+From: "fredy.chen" <fredy.chen@mitaccomputing.com>
+Date: Tue, 19 May 2026 04:13:33 -0400
+Subject: [PATCH] Fix SDR count error
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ dbus-sdr/sensorcommands.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dbus-sdr/sensorcommands.cpp b/dbus-sdr/sensorcommands.cpp
+index bd96ea2..db87ce8 100644
+--- a/dbus-sdr/sensorcommands.cpp
++++ b/dbus-sdr/sensorcommands.cpp
+@@ -2293,7 +2293,7 @@ static ipmi::RspType<uint8_t, // respcount
+     uint16_t numSensors{ipmi::getNumberOfSensors()};
+     if (operation.value_or(0) == getSdrCount)
+     {
+-        sdrCount = numSensors + ipmi::sensor::getOtherSensorsCount(ctx) - 1;
++        sdrCount = numSensors + ipmi::sensor::getOtherSensorsCount(ctx);
+     }
+     else if (operation.value_or(0) == getSensorCount)
+     {
+-- 
+2.34.1
+

@@ -6,6 +6,7 @@ SRC_URI:append = " \
     file://aspeed-bmc-mitac-r520g6.dts \
     file://aspeed-bmc-mitac-r520g6.mctp_smbus.dts \
     file://aspeed-bmc-mitac-s8051.dts \
+    file://aspeed-bmc-mitac-c810z5.dts \
     "
 
 do_patch:append() {

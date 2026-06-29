@@ -20,7 +20,7 @@ SPI_PATH="/sys/bus/spi/drivers/spi-nor"
 remove_resource()
 {
     echo "Remove resource in $IMAGE_DIR"
-    rm -rf $IMAGE_DIR
+    rm -rf $IMAGE_FILE
 }
 
 set_gpio_to_bmc()

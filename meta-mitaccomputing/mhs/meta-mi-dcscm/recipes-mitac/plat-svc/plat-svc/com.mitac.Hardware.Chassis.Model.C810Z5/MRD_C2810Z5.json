@@ -1,0 +1,40 @@
+{
+  "MitacMRD": [
+    {
+      "Id": "Dashboard_CPU_Temperatures",
+      "Metrics": [
+        {
+          "MetricProperties": [
+            "/redfish/v1/Chassis/Baseboard_C2810Z5/Sensors/temperature_CPU_0_TEMP_C"
+          ]
+        }
+      ],
+      "MetricReportDefinitionType": "Periodic",
+      "ReportActions": [
+        "RedfishEvent",
+        "LogToMetricReportsCollection"
+      ],
+      "Schedule": {
+        "RecurrenceInterval": "PT1S"
+      },
+      "ReportUpdates": "AppendWrapsWhenFull"
+    },
+    {
+      "Id": "Dashboard_Drive_PDLU",
+      "Metrics": [
+        {
+          "MetricProperties": []
+        }
+      ],
+      "MetricReportDefinitionType": "Periodic",
+      "ReportActions": [
+        "RedfishEvent",
+        "LogToMetricReportsCollection"
+      ],
+      "Schedule": {
+        "RecurrenceInterval": "PT1H"
+      },
+      "ReportUpdates": "AppendWrapsWhenFull"
+    }
+  ]
+}

@@ -177,7 +177,7 @@ get_fru_dev()
         return 0
     fi
 
-    local FRU_BUS=(1 4)
+    local FRU_BUS=(1 4 10)
     for BUS in "${FRU_BUS[@]}"
     do
         FRU_DEVICE="/sys/bus/i2c/devices/$BUS-0050/eeprom"

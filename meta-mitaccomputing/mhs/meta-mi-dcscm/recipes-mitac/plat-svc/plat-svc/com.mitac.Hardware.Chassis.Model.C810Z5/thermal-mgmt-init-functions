@@ -1,0 +1,3 @@
+init-phosphor-pid-control() {
+        echo "Decided to adapt the PID configuration from entity manager."
+}

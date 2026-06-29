@@ -2,8 +2,8 @@
 # MiOBMC (Branch: 2.18.0-MiOBMC)
 
 ## Release Information
-* **Release Quarter:** 2026 Q1
-* **Upload Date:** 2026-04-08
+* **Release Quarter:** 2026 Q2
+* **Upload Date:** 2026-06-29
 * **Base Version:** 2.18.0
 
 This branch contains the supported platform of MiTAC's products which includes
