@@ -1,0 +1,157 @@
+{
+    "Exposes": [
+        {
+            "Address": "0x48",
+            "Bus": 14,
+            "EntityId": 55,
+            "EntityInstance": 1,
+            "Name": "SCM TEMP_C",
+            "Thresholds": [
+                {
+                    "Direction": "greater than",
+                    "Label": "SCM TEMP_C",
+                    "Name": "upper critical",
+                    "Hysteresis": 3,
+                    "Severity": 1,
+                    "Value": 45,
+                    "Index": 1
+                }
+            ],
+            "Type": "TMP75"
+        },
+        {
+            "Index": 0,
+            "Name": "SCM_P12V_AUX VOLT_V",
+            "SOCName":"iio_hwmon",
+            "PowerState": "Always",
+            "ScaleFactor": 0.1123,
+            "MaxReading": 20,
+            "Thresholds": [
+                {
+                    "Direction": "greater than",
+                    "Name": "upper critical",
+                    "Severity": 1,
+                    "Value": 13.2
+                },
+                {
+                    "Direction": "less than",
+                    "Name": "lower critical",
+                    "Severity": 1,
+                    "Value": 10.8
+                }
+            ],
+            "Type": "ADC"
+        },
+        {
+            "Index": 1,
+            "Name": "SCM_P5V_AUX VOLT_V",
+            "SOCName":"iio_hwmon",
+            "PowerState": "Always",
+            "ScaleFactor": 0.2722,
+            "MaxReading": 10,
+            "Thresholds": [
+                {
+                    "Direction": "greater than",
+                    "Name": "upper critical",
+                    "Severity": 1,
+                    "Value": 5.35
+                },
+                {
+                    "Direction": "less than",
+                    "Name": "lower critical",
+                    "Severity": 1,
+                    "Value": 4.65
+                }
+            ],
+            "Type": "ADC"
+        },
+        {
+            "Index": 2,
+            "Name": "SCM_P3V3_AUX VOLT_V",
+            "SOCName":"iio_hwmon",
+            "PowerState": "Always",
+            "ScaleFactor": 0.4339,
+            "MaxReading": 5,
+            "Thresholds": [
+                {
+                    "Direction": "greater than",
+                    "Name": "upper critical",
+                    "Severity": 1,
+                    "Value": 3.63
+                },
+                {
+                    "Direction": "less than",
+                    "Name": "lower critical",
+                    "Severity": 1,
+                    "Value": 2.97
+                }
+            ],
+            "Type": "ADC"
+        },
+        {
+            "BridgeGpio" : [
+                {
+                    "Name" : "P3V_BAT_SCALED",
+                    "Polarity" : "Low"
+                }
+            ],
+            "Index": 3,
+            "Name": "SCM_P3V_BAT VOLT_V",
+            "SOCName":"iio_hwmon",
+            "PowerState": "Always",
+            "ScaleFactor": 0.3333,
+            "PollRate": 1200,
+            "MaxReading": 5,
+            "Thresholds": [
+                {
+                    "Direction": "greater than",
+                    "Name": "upper critical",
+                    "Severity": 1,
+                    "Value": 3.3
+                },
+                {
+                    "Direction": "less than",
+                    "Name": "lower critical",
+                    "Severity": 1,
+                    "Value": 2.7
+                }
+            ],
+            "Type": "ADC"
+        },
+        {
+            "Index": 4,
+            "Name": "SCM_P1V_AUX VOLT_V",
+            "SOCName":"iio_hwmon",
+            "PowerState": "Always",
+            "ScaleFactor": 1,
+            "MaxReading": 2,
+            "Thresholds": [
+                {
+                    "Direction": "greater than",
+                    "Name": "upper critical",
+                    "Severity": 1,
+                    "Value": 1.05
+                },
+                {
+                    "Direction": "less than",
+                    "Name": "lower critical",
+                    "Severity": 1,
+                    "Value": 0.95
+                }
+            ],
+            "Type": "ADC"
+        }
+    ],
+    "Name": "C2810Z5 DCSCM",
+    "Probe": [
+        "xyz.openbmc_project.FruDevice({'BUS' : 14, 'ADDRESS': 80})"
+    ],
+    "Type": "Board",
+    "xyz.openbmc_project.Inventory.Decorator.Asset": {
+        "Manufacturer": "$PRODUCT_MANUFACTURER",
+        "Model": "$PRODUCT_PRODUCT_NAME $PRODUCT_VERSION",
+        "PartNumber": "$PRODUCT_PART_NUMBER",
+        "SerialNumber": "$PRODUCT_SERIAL_NUMBER"
+    }
+}
+

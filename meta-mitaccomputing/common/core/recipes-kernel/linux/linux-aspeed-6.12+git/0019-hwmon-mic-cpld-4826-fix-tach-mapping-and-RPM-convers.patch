@@ -1,0 +1,52 @@
+From cc19340feb34345bb28d7fb380209609c8cb2f65 Mon Sep 17 00:00:00 2001
+From: Allen Kang <allen.kang@mitaccomputing.com>
+Date: Wed, 12 Aug 2026 08:29:08 -0400
+Subject: [PATCH] hwmon: mic-cpld-4826: fix tach mapping and RPM conversion
+
+The second CPLD tach register bank starts at 0x21, but hwmon exposes
+it as channels 16 through 31. Adding the hwmon channel directly to
+0x21 accesses registers 0x31 through 0x40 instead of 0x21 through
+0x30.
+
+Translate the second-bank channel to a zero-based index before
+forming the register address. The CPLD tach value represents
+380 RPM per count, so replace the incorrect factor of 40 with a
+named RPM conversion constant.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ drivers/hwmon/mic-cpld-4826.c | 2 +-
+ drivers/hwmon/mic-cpld-4826.h | 4 +++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/hwmon/mic-cpld-4826.c b/drivers/hwmon/mic-cpld-4826.c
+index 5ca4352e2b05..b05499e48dbd 100644
+--- a/drivers/hwmon/mic-cpld-4826.c
++++ b/drivers/hwmon/mic-cpld-4826.c
+@@ -277,7 +277,7 @@ static int mic_cpld_4826_read(struct device *dev, enum hwmon_sensor_types type,
+ 			if (ret < 0)
+ 				return ret;
+ 
+-			*val = ret * 40;
++			*val = ret * TACH_RPM_PER_COUNT;
+ 			return 0;
+ 		}
+ 		break;
+diff --git a/drivers/hwmon/mic-cpld-4826.h b/drivers/hwmon/mic-cpld-4826.h
+index 052fa44d38e4..2df8803acd9d 100644
+--- a/drivers/hwmon/mic-cpld-4826.h
++++ b/drivers/hwmon/mic-cpld-4826.h
+@@ -5,7 +5,9 @@
+ 
+ #define REG_PWM(ch) (0x31 + (ch))
+ #define REG_TACH_1(ch) (0x11 + (ch))
+-#define REG_TACH_2(ch) (0x21 + (ch))
++/* Map hwmon channels 16..31 (fan17..fan32) to tach registers 0x21..0x30. */
++#define REG_TACH_2(ch) (0x21 + ((ch) - 16))
++#define TACH_RPM_PER_COUNT 380
+ #define REG_LEAKAGE 0x08
+ 
+ #define MAX_PWM_CHANNELS 16
+-- 
+2.34.1
+

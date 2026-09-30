@@ -1,0 +1,139 @@
+From 42e5223f7ade0c4b120a99350e6643e35491f8ec Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Tue, 2 Jun 2026 01:13:06 +0000
+Subject: [PATCH] Fixed psusensor for label-specific PowerStates configuration
+
+- Reuse I2CDevice only from active sensors to avoid getting an invalid device from deactivated sensors. Also keep scanning sysfs paths during power-on recovery so inactive sensors with PowerState=on can be reactivated.
+- Keep the PSU-level PowerState as a base value and copy it for each sensor before applying label-specific overrides. This prevents one sensor's PowerState override from leaking into later sensors.
+
+Test:
+1. Set the entity-manager configuration for different label-specific PowerStates for the PSU.
+    {
+      "Type": "pmbus",
+      "iin_Name": "PSU $ADDRESS % 80 IIN CURR_A",
+      "iout1_Name": "PSU $ADDRESS % 80 IOUT CURR_A",
+      "iout1_PowerState": "On",
+      "pin_Name": "PSU $ADDRESS % 80 PIN PWR_W",
+      "pout1_Name": "PSU $ADDRESS % 80 POUT PWR_W",
+      "pout1_PowerState": "On",
+      "rated_maxpout1_Name": "PSU $ADDRESS % 80 POUT1 CAP PWR_W",
+      "temp1_Name": "PSU $ADDRESS % 80 TEMP_C",
+      "temp1_PowerState": "Always",
+      "vin_Name": "PSU $ADDRESS % 80 VIN VOLT_V",
+      "vin_PowerState": "Always",
+      "vout1_Name": "PSU $ADDRESS % 80 VOUT VOLT_V",
+      "vout1_PowerState": "On"
+    }
+
+2. Execute command: ipmitool sensor | grep PSU
+   - Power Off: The sensor value is NA if xxxxx_PowerState is "On".
+   - Power On:  All sensors can read values.
+   - No sensors should be lost.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/DeviceMgmt.hpp        | 30 ++++++++++++++++++++++++++++++
+ src/psu/PSUSensorMain.cpp | 14 ++++++++++++--
+ 2 files changed, 42 insertions(+), 2 deletions(-)
+
+diff --git a/src/DeviceMgmt.hpp b/src/DeviceMgmt.hpp
+index 18aebdd..f964706 100644
+--- a/src/DeviceMgmt.hpp
++++ b/src/DeviceMgmt.hpp
+@@ -136,6 +136,7 @@ boost::container::flat_map<std::string,
+                 continue;
+             }
+ 
++#if 0
+             std::shared_ptr<T> findSensor(nullptr);
+             for (const auto& sensor : sensors)
+             {
+@@ -153,6 +154,35 @@ boost::container::flat_map<std::string,
+                     std::make_pair(findSensor->getI2CDevice(), false));
+                 continue;
+             }
++#else
++            /* Reuse the I2CDevice held by an existing sensor that is still
++             * active, to avoid obtaining an empty or invalid device from a
++             * deactivated sensor.
++             */
++            std::shared_ptr<T> findSensor(nullptr);
++            for (const auto& sensor : sensors)
++            {
++                if (sensorNameFind(sensor.first, *sensorName) ==
++                    std::string::npos)
++                {
++                    continue;
++                }
++
++                if (sensor.second != nullptr && sensor.second->isActive())
++                {
++                    findSensor = sensor.second;
++                    break;
++                }
++            }
++
++            if (findSensor != nullptr)
++            {
++                devices.emplace(
++                    path.str,
++                    std::make_pair(findSensor->getI2CDevice(), false));
++                continue;
++            }
++#endif
+ 
+             int busNumber = -1;
+             const auto& findMuxCh = sensor.find(name + ".MuxChannel");
+diff --git a/src/psu/PSUSensorMain.cpp b/src/psu/PSUSensorMain.cpp
+index 05b8b43..9268389 100644
+--- a/src/psu/PSUSensorMain.cpp
++++ b/src/psu/PSUSensorMain.cpp
+@@ -474,10 +474,19 @@ static void createSensorsCallback(
+         std::shared_ptr<I2CDevice> i2cDev;
+         if (findI2CDev != devices.end())
+         {
++#if 0
+             if (activateOnly && !findI2CDev->second.second)
+             {
+                 continue;
+             }
++#else
++            /* During power-on recovery,
++             * even if the device continues to reuse the I2CDevice from an
++             * active Always sensor, the sysfs sensor path should still be
++             * scanned so that inactive sensors with PowerState = on have a
++             * chance to reactivate.
++             */
++#endif
+             i2cDev = findI2CDev->second.first;
+         }
+ 
+@@ -526,7 +535,7 @@ static void createSensorsCallback(
+         checkEvent(directory.string(), eventMatch, eventPathList);
+         checkGroupEvent(directory.string(), groupEventPathList);
+ 
+-        PowerState readState = getPowerState(*baseConfig);
++        const PowerState baseReadState = getPowerState(*baseConfig);
+ 
+         /* Check if there are more sensors in the same interface */
+         int i = 1;
+@@ -581,6 +590,7 @@ static void createSensorsCallback(
+         std::string sensorName;
+         for (const auto& sensorPath : sensorPaths)
+         {
++            PowerState readState = baseReadState;
+             bool maxLabel = false;
+             bool ratedMaxLabel = false;
+             std::string labelHead;
+@@ -1040,7 +1050,7 @@ static void createSensorsCallback(
+             combineEvents[*psuName + "OperationalStatus"] = nullptr;
+             combineEvents[*psuName + "OperationalStatus"] =
+                 std::make_unique<PSUCombineEvent>(
+-                    objectServer, dbusConnection, io, *psuName, readState,
++                    objectServer, dbusConnection, io, *psuName, baseReadState,
+                     eventPathList, groupEventPathList, "OperationalStatus",
+                     pollRate);
+             sensors[sensorName]->setPSUOPEvent(combineEvents[*psuName + "OperationalStatus"]);
+-- 
+2.43.0
+

@@ -1,0 +1,1023 @@
+From ddfdb53f76b5ec32d2e4fbc9ad92ea27cab57e99 Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Tue, 22 Sep 2026 09:02:38 +0000
+Subject: [PATCH] cpld: improve firmware update safety and diagnostics
+
+Add Redfish events for firmware update start, completion, and failure.
+Return proper D-Bus errors for concurrent updates and unsupported apply
+times. Propagate detailed Lattice update failure stages through temporary
+error logs and remove the logs after they are consumed.
+
+Resolve dynamic I2C buses from Entity Manager MuxChannel configuration
+when Bus is unavailable. Require a successful CPLD version read before
+publishing software objects in production builds, and derive each
+Software.Version.Purpose from its configured CPLD chip name.
+
+Add a process-wide CPLD reboot guard using dedicated systemd drop-ins for
+reboot, poweroff, and halt targets. Reference count concurrent updates,
+clean up stale guards at startup, and track inactive, active, and unknown
+states. Retry guard removal three times and preserve a safe state when
+cleanup fails.
+
+Ensure the reboot guard is released when the vendor update returns or
+throws. Also provide a CPLD_DEBUG mode that simulates a 60-second update
+without programming the device.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ common/include/device.hpp          |   4 +
+ common/src/device.cpp              |  91 +++++++++
+ common/src/software_update.cpp     |  16 +-
+ cpld/cpld.cpp                      |  44 ++++-
+ cpld/cpld.hpp                      |  10 +-
+ cpld/cpld_software_manager.cpp     | 107 +++++++++-
+ cpld/cpld_software_manager.hpp     |  16 +-
+ cpld/lattice/lattice_base_cpld.cpp |  26 +++
+ cpld/meson.build                   |   7 +-
+ cpld/reboot_guard.cpp              | 305 +++++++++++++++++++++++++++++
+ cpld/reboot_guard.hpp              |  55 ++++++
+ 11 files changed, 669 insertions(+), 12 deletions(-)
+ create mode 100644 cpld/reboot_guard.cpp
+ create mode 100644 cpld/reboot_guard.hpp
+
+diff --git a/common/include/device.hpp b/common/include/device.hpp
+index 3440a4b..c7bf181 100644
+--- a/common/include/device.hpp
++++ b/common/include/device.hpp
+@@ -96,6 +96,10 @@ class Device
+     sdbusplus::async::context& ctx;
+ 
+   private:
++    static void redfishLog(const std::string& id, const std::string& target,
++                           const std::string& version,
++                           const std::string& message);
++
+     bool updateInProgress = false;
+ 
+     // @param componentImage       component image as extracted from update pkg
+diff --git a/common/src/device.cpp b/common/src/device.cpp
+index 9e2278d..2b3bed9 100644
+--- a/common/src/device.cpp
++++ b/common/src/device.cpp
+@@ -11,6 +11,11 @@
+ #include <xyz/openbmc_project/Association/Definitions/server.hpp>
+ #include <xyz/openbmc_project/State/Host/client.hpp>
+ 
++#include <cstdint>
++#include <filesystem>
++#include <format>
++#include <fstream>
++#include <sstream>
+ #include <utility>
+ 
+ PHOSPHOR_LOG2_USING;
+@@ -32,6 +37,24 @@ Device::Device(sdbusplus::async::context& ctx, const SoftwareConfig& config,
+     parent(parent), ctx(ctx)
+ {}
+ 
++void Device::redfishLog(const std::string& id, const std::string& target,
++                        const std::string& version, const std::string& message)
++{
++    std::string msgId = "OpenBMC.0.5." + id;
++    std::string msgArgs;
++
++    if (id == "FirmwareUpdateFailed")
++    {
++        msgArgs = std::format("{},{},{}", target, version, message);
++    }
++    else if (id == "FirmwareUpdateStarted" || id == "FirmwareUpdateCompleted")
++    {
++        msgArgs = std::format("{},{}", target, version);
++    }
++    lg2::info("{LOG_MSG}", "LOG_MSG", message, "REDFISH_MESSAGE_ID", msgId,
++              "REDFISH_MESSAGE_ARGS", msgArgs);
++}
++
+ // NOLINTBEGIN(readability-static-accessed-through-instance)
+ sdbusplus::async::task<bool> Device::getImageInfo(
+     std::unique_ptr<void, std::function<void(void*)>>& pldmPackage,
+@@ -73,6 +96,62 @@ sdbusplus::async::task<bool> Device::startUpdateAsync(
+     std::unique_ptr<Software> softwarePendingIn)
+ // NOLINTEND(readability-static-accessed-through-instance)
+ {
++    auto redfishUpdateFailedLog = [this](const uint8_t* image, size_t imageSize,
++                                         const std::string& target,
++                                         const std::string& version) {
++        std::ostringstream path;
++        path << "/tmp/update_error_0x" << std::hex
++             << reinterpret_cast<std::uintptr_t>(image) << '_' << std::dec
++             << imageSize << ".log";
++        const std::string errorLogPath = path.str();
++        std::string updateError = "Firmware update failed";
++        std::error_code errorCode;
++        const bool errorLogExists =
++            std::filesystem::exists(errorLogPath, errorCode);
++
++        if (errorCode)
++        {
++            lg2::warning("Failed to check update error log {PATH}: {ERROR}",
++                         "PATH", errorLogPath, "ERROR", errorCode.message());
++        }
++        else if (errorLogExists)
++        {
++            {
++                std::ifstream errorLogFile(errorLogPath);
++                std::string firstLine;
++                if (!errorLogFile.is_open())
++                {
++                    lg2::warning("Failed to open update error log {PATH}",
++                                 "PATH", errorLogPath);
++                }
++                else if (!std::getline(errorLogFile, firstLine) ||
++                         firstLine.empty())
++                {
++                    lg2::warning("Update error log {PATH} is empty", "PATH",
++                                 errorLogPath);
++                }
++                else
++                {
++                    updateError = std::move(firstLine);
++                }
++            }
++        }
++
++        redfishLog("FirmwareUpdateFailed", target, version, updateError);
++
++        if (errorLogExists)
++        {
++            errorCode.clear();
++            if (!std::filesystem::remove(errorLogPath, errorCode))
++            {
++                lg2::warning(
++                    "Failed to remove update error log {PATH}: {ERROR}", "PATH",
++                    errorLogPath, "ERROR",
++                    errorCode ? errorCode.message() : "file no longer exists");
++            }
++        }
++    };
++
+     debug("starting the async update with memfd {FD}", "FD", image.fd);
+ 
+     size_t pldm_pkg_size = 0;
+@@ -80,6 +159,8 @@ sdbusplus::async::task<bool> Device::startUpdateAsync(
+ 
+     if (pldm_pkg == nullptr)
+     {
++        redfishLog("FirmwareUpdateFailed", config.configName, "(Undetected)",
++                   "Failed to map PLDM package");
+         softwarePendingIn->setActivation(ActivationInvalid);
+         co_return false;
+     }
+@@ -92,10 +173,15 @@ sdbusplus::async::task<bool> Device::startUpdateAsync(
+                                &componentImageSize, componentVersion))
+     {
+         error("could not extract matching component image");
++        redfishLog("FirmwareUpdateFailed", config.configName, "(Undetected)",
++                   "Could not extract matching component image");
+         softwarePendingIn->setActivation(ActivationInvalid);
+         co_return false;
+     }
+ 
++    redfishLog("FirmwareUpdateStarted", config.configName, componentVersion,
++               "Start the firmware update");
++
+     std::unique_ptr<Software> softwarePendingOld = std::move(softwarePending);
+ 
+     softwarePending = std::move(softwarePendingIn);
+@@ -109,12 +195,17 @@ sdbusplus::async::task<bool> Device::startUpdateAsync(
+         softwarePending->setActivation(ActivationFailed);
+         error("Failed to update the software for {SWID}", "SWID",
+               softwareCurrent->swid);
++        redfishUpdateFailedLog(componentImage, componentImageSize,
++                               config.configName, componentVersion);
+ 
+         softwarePending = std::move(softwarePendingOld);
+ 
+         co_return false;
+     }
+ 
++    redfishLog("FirmwareUpdateCompleted", config.configName, componentVersion,
++               "Firmware update successful");
++
+     if (applyTime == RequestedApplyTimes::Immediate)
+     {
+         softwareCurrent = std::move(softwarePending);
+diff --git a/common/src/software_update.cpp b/common/src/software_update.cpp
+index 6662a78..964bd57 100644
+--- a/common/src/software_update.cpp
++++ b/common/src/software_update.cpp
+@@ -48,8 +48,9 @@ auto SoftwareUpdate::method_call(start_update_t /*unused*/, auto image,
+     if (device.updateInProgress)
+     {
+         error("An update is already in progress, cannot update.");
+-        report<Unavailable>();
+-        co_return sdbusplus::message::object_path();
++        device.redfishLog("FirmwareUpdateFailed", device.config.configName,
++                          "(Undetected)", "A firmware update is in progress");
++        elog<Unavailable>();
+     }
+ 
+     device.updateInProgress = true;
+@@ -61,8 +62,15 @@ auto SoftwareUpdate::method_call(start_update_t /*unused*/, auto image,
+             "the selected apply time {APPLYTIME} is not allowed by the device",
+             "APPLYTIME", applyTime);
+         device.updateInProgress = false;
+-        report<Unavailable>();
+-        co_return sdbusplus::message::object_path();
++        device.redfishLog(
++            "FirmwareUpdateFailed", device.config.configName, "(Undetected)",
++            "The selected apply time is not allowed by the device");
++        using Argument =
++            phosphor::logging::xyz::openbmc_project::common::InvalidArgument;
++        elog<sdbusplus::xyz::openbmc_project::Common::Error::InvalidArgument>(
++            Argument::ARGUMENT_NAME("ApplyTime"),
++            Argument::ARGUMENT_VALUE(
++                sdbusplus::message::convert_to_string(applyTime).c_str()));
+     }
+ 
+     debug("started asynchronous update with fd {FD}", "FD", image.fd);
+diff --git a/cpld/cpld.cpp b/cpld/cpld.cpp
+index 6bc7634..424ae59 100644
+--- a/cpld/cpld.cpp
++++ b/cpld/cpld.cpp
+@@ -2,6 +2,9 @@
+ 
+ #include "common/include/utils.hpp"
+ 
++#include <chrono>
++#include <exception>
++
+ namespace phosphor::software::cpld
+ {
+ 
+@@ -39,11 +42,48 @@ sdbusplus::async::task<bool> CPLDDevice::updateDevice(const uint8_t* image,
+         co_return false;
+     }
+ 
++    const bool rebootGuardAcquired = co_await rebootGuard.acquire();
++    if (!rebootGuardAcquired)
++    {
++        lg2::warning(
++            "Failed to enable the CPLD reboot guard; continuing the update");
++    }
++
+     setUpdateProgress(1);
+-    if (!(co_await cpldInterface->updateFirmware(
++    bool updateSucceeded = false;
++#ifndef CPLD_DEBUG
++    try
++    {
++        updateSucceeded = co_await cpldInterface->updateFirmware(
+             false, image, image_size, [this](int percent) -> bool {
+                 return this->setUpdateProgress(percent);
+-            })))
++            });
++    }
++    catch (const std::exception& e)
++    {
++        lg2::error("CPLD firmware update threw an exception: {ERROR}", "ERROR",
++                   e.what());
++        updateSucceeded = false;
++    }
++    catch (...)
++    {
++        lg2::error("CPLD firmware update threw an unknown exception");
++        updateSucceeded = false;
++    }
++#else
++    static_cast<void>(image);
++    static_cast<void>(image_size);
++    lg2::warning(
++        "CPLD_DEBUG is enabled; simulating a firmware update for 60 seconds without writing the CPLD");
++    co_await sdbusplus::async::sleep_for(ctx, std::chrono::seconds(60));
++    updateSucceeded = true;
++#endif
++    // acquire() registers this updater even when enabling the systemd guard
++    // fails, so that a later successful concurrent acquire remains protected
++    // until every updater has released its reference.
++    co_await rebootGuard.release();
++
++    if (!updateSucceeded)
+     {
+         lg2::error("Failed to update CPLD firmware");
+         co_return false;
+diff --git a/cpld/cpld.hpp b/cpld/cpld.hpp
+index 41e1ae3..65ad5e3 100644
+--- a/cpld/cpld.hpp
++++ b/cpld/cpld.hpp
+@@ -3,11 +3,17 @@
+ #include "common/include/device.hpp"
+ #include "common/include/software_manager.hpp"
+ #include "cpld_interface.hpp"
++#include "reboot_guard.hpp"
+ 
+ #include <gpio_controller.hpp>
+ #include <phosphor-logging/lg2.hpp>
+ #include <sdbusplus/async/context.hpp>
+ 
++// Test only: allow software object creation when version detection fails and
++// simulate a successful 60-second update under the reboot guard without
++// erasing or programming the CPLD. Disable this for production builds.
++// #define CPLD_DEBUG
++
+ PHOSPHOR_LOG2_USING;
+ 
+ namespace ManagerInf = phosphor::software::manager;
+@@ -22,13 +28,14 @@ class CPLDDevice : public Device
+                const std::string& chipname, const uint16_t& bus,
+                const uint8_t& address, SoftwareConfig& config,
+                ManagerInf::SoftwareManager* parent,
++               CPLDRebootGuard& rebootGuard,
+                const std::vector<std::string>& gpioLinesIn,
+                const std::vector<bool>& gpioValuesIn) :
+         Device(ctx, config, parent,
+                {RequestedApplyTimes::Immediate, RequestedApplyTimes::OnReset}),
+         cpldInterface(CPLDFactory::instance().create(chiptype, ctx, chipname,
+                                                      bus, address)),
+-        muxGPIOs(gpioLinesIn, gpioValuesIn)
++        muxGPIOs(gpioLinesIn, gpioValuesIn), rebootGuard(rebootGuard)
+     {}
+ 
+     using Device::softwareCurrent;
+@@ -40,6 +47,7 @@ class CPLDDevice : public Device
+     std::optional<ScopedBmcMux> setupMux();
+     std::unique_ptr<CPLDInterface> cpldInterface;
+     GPIOGroup muxGPIOs;
++    CPLDRebootGuard& rebootGuard;
+ };
+ 
+ } // namespace phosphor::software::cpld
+diff --git a/cpld/cpld_software_manager.cpp b/cpld/cpld_software_manager.cpp
+index 485a7b5..b46213b 100644
+--- a/cpld/cpld_software_manager.cpp
++++ b/cpld/cpld_software_manager.cpp
+@@ -6,10 +6,90 @@
+ #include <phosphor-logging/lg2.hpp>
+ #include <sdbusplus/async.hpp>
+ 
++#include <charconv>
++#include <filesystem>
++#include <limits>
++#include <string_view>
++#include <system_error>
++#include <utility>
++
+ PHOSPHOR_LOG2_USING;
+ 
+ using namespace phosphor::software::cpld;
+ 
++namespace fs = std::filesystem;
++
++sdbusplus::async::task<std::optional<uint64_t>>
++    CPLDSoftwareManager::getBusNoFromMuxChannel(const std::string& service,
++                                                const std::string& path,
++                                                const std::string& configIface)
++{
++    const std::string muxChannelIface = configIface + ".MuxChannel";
++    auto muxName = co_await dbusGetRequiredProperty<std::string>(
++        ctx, service, path, muxChannelIface, "MuxName");
++    auto channelName = co_await dbusGetRequiredProperty<std::string>(
++        ctx, service, path, muxChannelIface, "ChannelName");
++
++    if (!muxName.has_value() || muxName->empty() || !channelName.has_value() ||
++        channelName->empty())
++    {
++        error("Missing or empty MuxChannel property on path {PATH}", "PATH",
++              path);
++        co_return std::nullopt;
++    }
++
++    const fs::path linkPath =
++        fs::path("/dev/i2c-mux") / *muxName / *channelName;
++    std::error_code ec;
++    const bool isSymlink = fs::is_symlink(linkPath, ec);
++    if (ec)
++    {
++        error("Failed to inspect I2C mux path {PATH}: {ERROR}", "PATH",
++              linkPath.string(), "ERROR", ec.message());
++        co_return std::nullopt;
++    }
++    if (!isSymlink)
++    {
++        error("I2C mux path {PATH} is not a symbolic link", "PATH",
++              linkPath.string());
++        co_return std::nullopt;
++    }
++
++    const fs::path target = fs::read_symlink(linkPath, ec);
++    if (ec)
++    {
++        error("Failed to read I2C mux symbolic link {PATH}: {ERROR}", "PATH",
++              linkPath.string(), "ERROR", ec.message());
++        co_return std::nullopt;
++    }
++
++    const std::string deviceName = target.filename().string();
++    constexpr std::string_view prefix = "i2c-";
++    if (!deviceName.starts_with(prefix))
++    {
++        error("Invalid I2C mux symbolic link target {TARGET}", "TARGET",
++              target.string());
++        co_return std::nullopt;
++    }
++
++    const std::string_view busString(deviceName.data() + prefix.size(),
++                                     deviceName.size() - prefix.size());
++    uint64_t resolvedBusNo = 0;
++    const auto [end, parseError] = std::from_chars(
++        busString.data(), busString.data() + busString.size(), resolvedBusNo);
++    if (busString.empty() || parseError != std::errc{} ||
++        end != busString.data() + busString.size())
++    {
++        error("Invalid I2C bus number in symbolic link target {TARGET}",
++              "TARGET", target.string());
++        co_return std::nullopt;
++    }
++
++    debug("Resolved I2C mux channel {MUX}/{CHANNEL} to bus {BUS}", "MUX",
++          *muxName, "CHANNEL", *channelName, "BUS", resolvedBusNo);
++    co_return resolvedBusNo;
++}
++
+ sdbusplus::async::task<bool> CPLDSoftwareManager::initDevice(
+     const std::string& service, const std::string& path, SoftwareConfig& config)
+ {
+@@ -18,6 +98,10 @@ sdbusplus::async::task<bool> CPLDSoftwareManager::initDevice(
+ 
+     auto busNo = co_await dbusGetRequiredProperty<uint64_t>(
+         ctx, service, path, configIface, "Bus");
++    if (!busNo.has_value())
++    {
++        busNo = co_await getBusNoFromMuxChannel(service, path, configIface);
++    }
+     auto address = co_await dbusGetRequiredProperty<uint64_t>(
+         ctx, service, path, configIface, "Address");
+     auto chipType = co_await dbusGetRequiredProperty<std::string>(
+@@ -71,18 +155,28 @@ sdbusplus::async::task<bool> CPLDSoftwareManager::initDevice(
+ 
+     auto cpld = std::make_unique<CPLDDevice>(
+         ctx, chipType.value(), chipName.value(), busNo.value(), address.value(),
+-        config, this, names, values);
++        config, this, rebootGuard, names, values);
+ 
+     std::string version = "unknown";
+     if (!(co_await cpld->getVersion(version)))
+     {
+         lg2::error("Failed to get CPLD version for {NAME}", "NAME",
+                    chipName.value());
++#ifndef CPLD_DEBUG
++        co_return false;
++#endif
+     }
+ 
+     std::unique_ptr<Software> software = std::make_unique<Software>(ctx, *cpld);
+ 
+-    software->setVersion(version, SoftwareVersion::VersionPurpose::Other);
++    const std::string purposeName =
++        "xyz.openbmc_project.Software.Version.VersionPurpose." +
++        chipName.value();
++    const auto versionPurpose =
++        SoftwareVersion::convertStringToVersionPurpose(purposeName)
++            .value_or(SoftwareVersion::VersionPurpose::Other);
++
++    software->setVersion(version, versionPurpose);
+ 
+     std::set<RequestedApplyTimes> allowedApplyTimes = {
+         RequestedApplyTimes::Immediate, RequestedApplyTimes::OnReset};
+@@ -96,6 +190,13 @@ sdbusplus::async::task<bool> CPLDSoftwareManager::initDevice(
+     co_return true;
+ }
+ 
++sdbusplus::async::task<> CPLDSoftwareManager::startAsync(
++    std::vector<std::string> configurationInterfaces)
++{
++    co_await rebootGuard.cleanupStaleGuard();
++    co_await initDevices(configurationInterfaces);
++}
++
+ void CPLDSoftwareManager::start()
+ {
+     std::vector<std::string> configIntfs;
+@@ -106,7 +207,7 @@ void CPLDSoftwareManager::start()
+         configIntfs.push_back("xyz.openbmc_project.Configuration." + config);
+     }
+ 
+-    ctx.spawn(initDevices(configIntfs));
++    ctx.spawn(startAsync(std::move(configIntfs)));
+     ctx.run();
+ }
+ 
+diff --git a/cpld/cpld_software_manager.hpp b/cpld/cpld_software_manager.hpp
+index 37530cf..e805386 100644
+--- a/cpld/cpld_software_manager.hpp
++++ b/cpld/cpld_software_manager.hpp
+@@ -1,6 +1,11 @@
+ #pragma once
+ 
+ #include "common/include/software_manager.hpp"
++#include "reboot_guard.hpp"
++
++#include <cstdint>
++#include <optional>
++#include <string>
+ 
+ namespace phosphor::software::cpld
+ {
+@@ -9,7 +14,7 @@ class CPLDSoftwareManager : public phosphor::software::manager::SoftwareManager
+ {
+   public:
+     CPLDSoftwareManager(sdbusplus::async::context& ctx) :
+-        SoftwareManager(ctx, "CPLD")
++        SoftwareManager(ctx, "CPLD"), rebootGuard(ctx)
+     {}
+ 
+     sdbusplus::async::task<bool> initDevice(const std::string& service,
+@@ -17,6 +22,15 @@ class CPLDSoftwareManager : public phosphor::software::manager::SoftwareManager
+                                             SoftwareConfig& config) final;
+ 
+     void start();
++
++  private:
++    sdbusplus::async::task<std::optional<uint64_t>> getBusNoFromMuxChannel(
++        const std::string& service, const std::string& path,
++        const std::string& configIface);
++    sdbusplus::async::task<> startAsync(
++        std::vector<std::string> configurationInterfaces);
++
++    CPLDRebootGuard rebootGuard;
+ };
+ 
+ } // namespace phosphor::software::cpld
+diff --git a/cpld/lattice/lattice_base_cpld.cpp b/cpld/lattice/lattice_base_cpld.cpp
+index 32a02ed..a2efb31 100644
+--- a/cpld/lattice/lattice_base_cpld.cpp
++++ b/cpld/lattice/lattice_base_cpld.cpp
+@@ -2,9 +2,11 @@
+ 
+ #include <algorithm>
+ #include <cstddef>
++#include <cstdint>
+ #include <fstream>
+ #include <map>
+ #include <numeric>
++#include <sstream>
+ #include <vector>
+ 
+ namespace phosphor::software::cpld
+@@ -52,14 +54,34 @@ sdbusplus::async::task<bool> LatticeBaseCPLD::updateFirmware(
+     const uint8_t* image, size_t imageSize,
+     std::function<bool(int)> progressCallBackIn)
+ {
++    auto setUpdateErrorLog = [](const uint8_t* image, size_t imageSize,
++                                const std::string& errorLog) {
++        std::ostringstream path;
++        path << "/tmp/update_error_0x" << std::hex
++             << reinterpret_cast<std::uintptr_t>(image) << '_' << std::dec
++             << imageSize << ".log";
++
++        std::ofstream logFile(path.str(), std::ios::out | std::ios::trunc);
++        if (!logFile.is_open())
++        {
++            lg2::warning("Failed to open update error log {PATH}", "PATH",
++                         path.str());
++            return;
++        }
++
++        logFile << errorLog;
++    };
++
+     if (progressCallBackIn == nullptr)
+     {
++        setUpdateErrorLog(image, imageSize, "progressCallBack is null");
+         lg2::error("Error: progressCallBack is null.");
+         co_return false;
+     }
+ 
+     if (!image || imageSize == 0)
+     {
++        setUpdateErrorLog(image, imageSize, "image is null");
+         lg2::error("Error: image is null.");
+         co_return false;
+     }
+@@ -70,6 +92,7 @@ sdbusplus::async::task<bool> LatticeBaseCPLD::updateFirmware(
+     auto result = co_await prepareUpdate(image, imageSize);
+     if (!result)
+     {
++        setUpdateErrorLog(image, imageSize, "Prepare update failed");
+         lg2::error("Prepare update failed.");
+         co_return false;
+     }
+@@ -79,6 +102,7 @@ sdbusplus::async::task<bool> LatticeBaseCPLD::updateFirmware(
+     result = co_await doErase();
+     if (!result)
+     {
++        setUpdateErrorLog(image, imageSize, "Do erase failed");
+         lg2::error("Do erase failed.");
+         co_return false;
+     }
+@@ -88,6 +112,7 @@ sdbusplus::async::task<bool> LatticeBaseCPLD::updateFirmware(
+     result = co_await doUpdate();
+     if (!result)
+     {
++        setUpdateErrorLog(image, imageSize, "Do update failed");
+         lg2::error("Do update failed.");
+         co_return false;
+     }
+@@ -97,6 +122,7 @@ sdbusplus::async::task<bool> LatticeBaseCPLD::updateFirmware(
+     result = co_await finishUpdate();
+     if (!result)
+     {
++        setUpdateErrorLog(image, imageSize, "Finish update failed");
+         lg2::error("Finish update failed.");
+         co_return false;
+     }
+diff --git a/cpld/meson.build b/cpld/meson.build
+index 3766ec0..ea2f1c2 100644
+--- a/cpld/meson.build
++++ b/cpld/meson.build
+@@ -1,4 +1,9 @@
+-cpld_src = files('cpld.cpp', 'cpld_interface.cpp', 'cpld_software_manager.cpp')
++cpld_src = files(
++    'cpld.cpp',
++    'cpld_interface.cpp',
++    'cpld_software_manager.cpp',
++    'reboot_guard.cpp',
++)
+ 
+ cpld_vendor_src = files(
+     'altera/max10_base_cpld.cpp',
+diff --git a/cpld/reboot_guard.cpp b/cpld/reboot_guard.cpp
+new file mode 100644
+index 0000000..1270021
+--- /dev/null
++++ b/cpld/reboot_guard.cpp
+@@ -0,0 +1,305 @@
++#include "reboot_guard.hpp"
++
++#include <phosphor-logging/lg2.hpp>
++#include <sdbusplus/async.hpp>
++
++#include <array>
++#include <chrono>
++#include <filesystem>
++#include <fstream>
++#include <string_view>
++#include <system_error>
++
++PHOSPHOR_LOG2_USING;
++
++namespace phosphor::software::cpld
++{
++
++namespace fs = std::filesystem;
++using namespace std::chrono_literals;
++
++constexpr std::array<std::string_view, 3> guardedTargets = {
++    "reboot", "poweroff", "halt"};
++constexpr const char systemdRuntimeRoot[] = "/run/systemd/system";
++constexpr std::string_view guardFileName = "cpld-update-reboot-guard.conf";
++constexpr std::string_view guardContents = "[Unit]\nRefuseManualStart=yes\n";
++constexpr size_t removeMaxAttempts = 3;
++constexpr auto removeRetryInterval = 100ms;
++
++CPLDRebootGuard::CPLDRebootGuard(sdbusplus::async::context& ctx) : ctx(ctx) {}
++
++sdbusplus::async::task<> CPLDRebootGuard::waitForTransition()
++{
++    while (transitionInProgress)
++    {
++        co_await sdbusplus::async::sleep_for(ctx, 10ms);
++    }
++}
++
++bool CPLDRebootGuard::createGuardFiles()
++{
++    for (const std::string_view target : guardedTargets)
++    {
++        const fs::path directory =
++            fs::path(systemdRuntimeRoot) / (std::string(target) + ".target.d");
++        std::error_code ec;
++        fs::create_directories(directory, ec);
++        if (ec)
++        {
++            error(
++                "Failed to create CPLD reboot guard directory {PATH}: {ERROR}",
++                "PATH", directory.string(), "ERROR", ec.message());
++            return false;
++        }
++
++        const fs::path guardPath = directory / guardFileName;
++        std::ofstream guardFile(guardPath, std::ios::out | std::ios::trunc);
++        if (!guardFile.is_open())
++        {
++            error("Failed to create CPLD reboot guard file {PATH}", "PATH",
++                  guardPath.string());
++            return false;
++        }
++
++        guardFile << guardContents;
++        if (!guardFile.good())
++        {
++            error("Failed to write CPLD reboot guard file {PATH}", "PATH",
++                  guardPath.string());
++            guardFile.close();
++            return false;
++        }
++    }
++
++    return true;
++}
++
++sdbusplus::async::task<CPLDRebootGuard::RemoveGuardResult>
++    CPLDRebootGuard::removeGuardFiles()
++{
++    RemoveGuardResult result;
++
++    for (size_t attempt = 1; attempt <= removeMaxAttempts; ++attempt)
++    {
++        bool allRemoved = true;
++
++        for (const std::string_view target : guardedTargets)
++        {
++            const fs::path guardPath =
++                fs::path(systemdRuntimeRoot) /
++                (std::string(target) + ".target.d") / guardFileName;
++            std::error_code ec;
++            const bool removed = fs::remove(guardPath, ec);
++            result.removedAny = result.removedAny || removed;
++
++            if (ec)
++            {
++                allRemoved = false;
++                if (attempt < removeMaxAttempts)
++                {
++                    warning(
++                        "Failed to remove CPLD reboot guard file {PATH} on attempt {ATTEMPT}/{MAX_ATTEMPTS}: {ERROR}",
++                        "PATH", guardPath.string(), "ATTEMPT", attempt,
++                        "MAX_ATTEMPTS", removeMaxAttempts, "ERROR",
++                        ec.message());
++                }
++                else
++                {
++                    error(
++                        "Failed to remove CPLD reboot guard file {PATH} after {MAX_ATTEMPTS} attempts: {ERROR}",
++                        "PATH", guardPath.string(), "MAX_ATTEMPTS",
++                        removeMaxAttempts, "ERROR", ec.message());
++                }
++            }
++        }
++
++        if (allRemoved)
++        {
++            result.allRemoved = true;
++            co_return result;
++        }
++
++        if (attempt < removeMaxAttempts)
++        {
++            co_await sdbusplus::async::sleep_for(ctx, removeRetryInterval);
++        }
++    }
++
++    co_return result;
++}
++
++sdbusplus::async::task<bool> CPLDRebootGuard::reloadSystemd()
++{
++    auto systemd = sdbusplus::async::proxy()
++                       .service("org.freedesktop.systemd1")
++                       .path("/org/freedesktop/systemd1")
++                       .interface("org.freedesktop.systemd1.Manager");
++
++    try
++    {
++        co_await systemd.call<>(ctx, "Reload");
++    }
++    catch (const std::exception& e)
++    {
++        error("Failed to reload systemd for CPLD reboot guard: {ERROR}",
++              "ERROR", e.what());
++        co_return false;
++    }
++
++    co_return true;
++}
++
++sdbusplus::async::task<CPLDRebootGuard::GuardState>
++    CPLDRebootGuard::rollbackGuard()
++{
++    const auto removal = co_await removeGuardFiles();
++    if (!removal.allRemoved)
++    {
++        error("Failed to roll back incomplete CPLD reboot guard files");
++        co_return (co_await restoreGuard())
++            ? GuardState::active
++            : GuardState::unknown;
++    }
++
++    if (!(co_await reloadSystemd()))
++    {
++        error("Failed to reload systemd after rolling back CPLD reboot guard");
++        co_return (co_await restoreGuard())
++            ? GuardState::active
++            : GuardState::unknown;
++    }
++
++    co_return GuardState::inactive;
++}
++
++sdbusplus::async::task<CPLDRebootGuard::GuardState>
++    CPLDRebootGuard::enableGuard()
++{
++    if (!createGuardFiles())
++    {
++        error("Failed to create all CPLD reboot guard files; rolling back");
++        co_return co_await rollbackGuard();
++    }
++
++    if (!(co_await reloadSystemd()))
++    {
++        error("Failed to enable CPLD reboot guard; rolling back guard files");
++        co_return co_await rollbackGuard();
++    }
++
++    info("CPLD firmware update started; manual BMC transitions are disabled");
++    co_return GuardState::active;
++}
++
++sdbusplus::async::task<bool> CPLDRebootGuard::restoreGuard()
++{
++    if (!createGuardFiles())
++    {
++        error("Failed to restore all CPLD reboot guard files");
++        co_return false;
++    }
++
++    if (!(co_await reloadSystemd()))
++    {
++        error("Failed to reload systemd after restoring CPLD reboot guard");
++        co_return false;
++    }
++
++    warning("CPLD reboot guard remains enabled after cleanup failure");
++    co_return true;
++}
++
++sdbusplus::async::task<CPLDRebootGuard::GuardState>
++    CPLDRebootGuard::disableGuard()
++{
++    const auto removal = co_await removeGuardFiles();
++    if (!removal.allRemoved)
++    {
++        error("Failed to remove all CPLD reboot guard files");
++        co_return (co_await restoreGuard())
++            ? GuardState::active
++            : GuardState::unknown;
++    }
++
++    if (!(co_await reloadSystemd()))
++    {
++        error("Failed to reload systemd after removing CPLD reboot guard");
++        co_return (co_await restoreGuard())
++            ? GuardState::active
++            : GuardState::unknown;
++    }
++
++    info("CPLD firmware updates ended; manual BMC transitions are enabled");
++    co_return GuardState::inactive;
++}
++
++sdbusplus::async::task<bool> CPLDRebootGuard::acquire()
++{
++    co_await waitForTransition();
++    transitionInProgress = true;
++
++    if (activeUsers == 0 || guardState != GuardState::active)
++    {
++        guardState = co_await enableGuard();
++    }
++
++    ++activeUsers;
++    transitionInProgress = false;
++    co_return guardState == GuardState::active;
++}
++
++sdbusplus::async::task<> CPLDRebootGuard::release()
++{
++    co_await waitForTransition();
++    transitionInProgress = true;
++
++    if (activeUsers == 0)
++    {
++        warning("Ignoring release of an inactive CPLD reboot guard");
++        transitionInProgress = false;
++        co_return;
++    }
++
++    --activeUsers;
++    if (activeUsers == 0)
++    {
++        guardState = co_await disableGuard();
++    }
++
++    transitionInProgress = false;
++}
++
++sdbusplus::async::task<> CPLDRebootGuard::cleanupStaleGuard()
++{
++    co_await waitForTransition();
++    transitionInProgress = true;
++
++    activeUsers = 0;
++    const auto removal = co_await removeGuardFiles();
++    if (!removal.allRemoved)
++    {
++        error("Failed to remove all stale CPLD reboot guard files");
++        guardState = GuardState::unknown;
++        transitionInProgress = false;
++        co_return;
++    }
++
++    if (!(co_await reloadSystemd()))
++    {
++        error(
++            "Failed to reload systemd after removing stale CPLD reboot guard");
++        guardState = GuardState::unknown;
++        transitionInProgress = false;
++        co_return;
++    }
++
++    guardState = GuardState::inactive;
++    if (removal.removedAny)
++    {
++        warning("Removed stale CPLD reboot guard from a previous daemon run");
++    }
++
++    transitionInProgress = false;
++}
++
++} // namespace phosphor::software::cpld
+diff --git a/cpld/reboot_guard.hpp b/cpld/reboot_guard.hpp
+new file mode 100644
+index 0000000..1b537d0
+--- /dev/null
++++ b/cpld/reboot_guard.hpp
+@@ -0,0 +1,55 @@
++#pragma once
++
++#include <sdbusplus/async/context.hpp>
++#include <sdbusplus/async/task.hpp>
++
++#include <cstddef>
++
++namespace phosphor::software::cpld
++{
++
++class CPLDRebootGuard
++{
++  public:
++    explicit CPLDRebootGuard(sdbusplus::async::context& ctx);
++
++    CPLDRebootGuard(const CPLDRebootGuard&) = delete;
++    CPLDRebootGuard& operator=(const CPLDRebootGuard&) = delete;
++    CPLDRebootGuard(CPLDRebootGuard&&) = delete;
++    CPLDRebootGuard& operator=(CPLDRebootGuard&&) = delete;
++
++    sdbusplus::async::task<bool> acquire();
++    sdbusplus::async::task<> release();
++    sdbusplus::async::task<> cleanupStaleGuard();
++
++  private:
++    enum class GuardState
++    {
++        inactive,
++        active,
++        unknown,
++    };
++
++    struct RemoveGuardResult
++    {
++        bool allRemoved = false;
++        bool removedAny = false;
++    };
++
++    sdbusplus::async::task<> waitForTransition();
++    sdbusplus::async::task<GuardState> enableGuard();
++    sdbusplus::async::task<GuardState> disableGuard();
++    sdbusplus::async::task<GuardState> rollbackGuard();
++    sdbusplus::async::task<bool> restoreGuard();
++    sdbusplus::async::task<bool> reloadSystemd();
++    sdbusplus::async::task<RemoveGuardResult> removeGuardFiles();
++
++    bool createGuardFiles();
++
++    sdbusplus::async::context& ctx;
++    size_t activeUsers = 0;
++    GuardState guardState = GuardState::inactive;
++    bool transitionInProgress = false;
++};
++
++} // namespace phosphor::software::cpld
+-- 
+2.43.0
+

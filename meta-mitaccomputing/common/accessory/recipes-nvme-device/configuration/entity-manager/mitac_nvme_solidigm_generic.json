@@ -53,7 +53,7 @@
   },
   "xyz.openbmc_project.Inventory.Item.Chassis": {},
   "xyz.openbmc_project.Inventory.Decorator.Revision": {
-    "Version": "mitac_nvme_kioxia_generic"
+    "Version": "mitac_nvme_solidigm_generic"
   },
   "xyz.openbmc_project.Inventory.Decorator.I2CDevice": {
     "Address": "$ADDRESS",

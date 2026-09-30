@@ -1,0 +1,263 @@
+From 5a160687858cc3d6e587db7cecb7124f64158b37 Mon Sep 17 00:00:00 2001
+From: Allen Lin <mingchih.lin@mitaccomputing.com>
+Date: Mon, 10 Aug 2026 08:05:11 +0000
+Subject: [PATCH] [impv] Adjust invalid-login logging
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+
+Summary:
+ - Align with DMTF Redfish Message Registry Guide (2026-04-03).
+ - Stop logging invalid usernames to prevent log spam during mass login attacks.
+
+Reference:
+ - https://jira.navman.co.nz/jira/browse/OFDT-168
+ - https://www.dmtf.org/sites/default/files/standards/documents/DSP2065_2026.1.pdf
+---
+ command/rakp12.cpp  | 36 ++++++++++++++++-------------
+ command/rakp12.hpp  |  6 ++---
+ message_handler.cpp | 55 +++++++++++++++++++++++++++++++++++++++++++++
+ message_handler.hpp |  3 +++
+ 4 files changed, 82 insertions(+), 18 deletions(-)
+
+diff --git a/command/rakp12.cpp b/command/rakp12.cpp
+index 2a9f4d0..997e12f 100644
+--- a/command/rakp12.cpp
++++ b/command/rakp12.cpp
+@@ -16,6 +16,9 @@
+ #include <cstring>
+ #include <iomanip>
+ 
++#include <arpa/inet.h>
++#include <netinet/in.h>
++
+ namespace command
+ {
+ 
+@@ -26,19 +29,22 @@ bool isChannelAccessModeEnabled(const uint8_t accessMode)
+ }
+ 
+ void logInvalidLoginRedfishEvent(const std::string& journalMsg,
+-                                 const std::optional<std::string>& messageArgs)
++                                 const std::string& ipStr,
++                                 const std::string& messageFrom = "RMCPP")
+ {
+     static constexpr std::string_view openBMCMessageRegistryVersion = "0.1.";
+     std::string messageID =
+-        "OpenBMC." + std::string(openBMCMessageRegistryVersion) +
+-        "InvalidLoginAttempted";
++        "AccountSecurity." + std::string(openBMCMessageRegistryVersion) +
++        "InvalidCredentials";
++    std::string argsStr = ipStr + "," + messageFrom;
+     lg2::error(
+         "message: {MSG}, id: {REDFISH_MESSAGE_ID}, args: {REDFISH_MESSAGE_ARGS}",
+         "MSG", journalMsg, "REDFISH_MESSAGE_ID", messageID,
+-        "REDFISH_MESSAGE_ARGS", messageArgs.value_or(std::string{}));
++        "REDFISH_MESSAGE_ARGS", argsStr);
+ }
++
+ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+-                            std::shared_ptr<message::Handler>& /* handler */)
++                            std::shared_ptr<message::Handler>& handler)
+ {
+     auto request = reinterpret_cast<const RAKP1request*>(inPayload.data());
+     // verify inPayload minimum size
+@@ -51,6 +57,9 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+     std::vector<uint8_t> outPayload(sizeof(RAKP2response));
+     auto response = reinterpret_cast<RAKP2response*>(outPayload.data());
+ 
++    auto ipOpt = handler->getRemoteAddress();
++    std::string ipStr = ipOpt ? *ipOpt : "unknown";
++
+     // Session ID zero is reserved for Session Setup
+     if (endian::from_ipmi(request->managedSystemSessionID) ==
+         session::sessionZero)
+@@ -85,7 +94,6 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+     {
+         response->rmcpStatusCode =
+             static_cast<uint8_t>(RAKP_ReturnCode::INVALID_NAME_LENGTH);
+-        logInvalidLoginRedfishEvent(message);
+         return outPayload;
+     }
+ 
+@@ -172,7 +180,6 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+         // Yes, NULL user name is not supported for security reasons.
+         response->rmcpStatusCode =
+             static_cast<uint8_t>(RAKP_ReturnCode::UNAUTH_NAME);
+-        logInvalidLoginRedfishEvent(message);
+         return outPayload;
+     }
+ 
+@@ -184,7 +191,6 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+     {
+         response->rmcpStatusCode =
+             static_cast<uint8_t>(RAKP_ReturnCode::UNAUTH_NAME);
+-        logInvalidLoginRedfishEvent(message);
+         return outPayload;
+     }
+     // check user is enabled before proceeding.
+@@ -194,7 +200,7 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+     {
+         response->rmcpStatusCode =
+             static_cast<uint8_t>(RAKP_ReturnCode::INACTIVE_ROLE);
+-        logInvalidLoginRedfishEvent(message);
++        logInvalidLoginRedfishEvent(message, ipStr);
+         return outPayload;
+     }
+     // Get the user password for RAKP message authenticate
+@@ -203,7 +209,7 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+     {
+         response->rmcpStatusCode =
+             static_cast<uint8_t>(RAKP_ReturnCode::UNAUTH_NAME);
+-        logInvalidLoginRedfishEvent(message);
++        logInvalidLoginRedfishEvent(message, ipStr);
+         return outPayload;
+     }
+ #ifdef PAM_AUTHENTICATE
+@@ -216,7 +222,7 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+ 
+         response->rmcpStatusCode =
+             static_cast<uint8_t>(RAKP_ReturnCode::UNAUTH_NAME);
+-        logInvalidLoginRedfishEvent(message);
++        logInvalidLoginRedfishEvent(message, ipStr);
+         return outPayload;
+     }
+ #endif
+@@ -231,7 +237,7 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+     {
+         response->rmcpStatusCode =
+             static_cast<uint8_t>(RAKP_ReturnCode::INACTIVE_ROLE);
+-        logInvalidLoginRedfishEvent(message);
++        logInvalidLoginRedfishEvent(message, ipStr);
+         return outPayload;
+     }
+     if (!isChannelAccessModeEnabled(session->sessionChannelAccess.accessMode))
+@@ -239,7 +245,7 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+         lg2::error("Channel access mode disabled.");
+         response->rmcpStatusCode =
+             static_cast<uint8_t>(RAKP_ReturnCode::INACTIVE_ROLE);
+-        logInvalidLoginRedfishEvent(message);
++        logInvalidLoginRedfishEvent(message, ipStr);
+         return outPayload;
+     }
+     if (session->sessionUserPrivAccess.privilege >
+@@ -247,7 +253,7 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+     {
+         response->rmcpStatusCode =
+             static_cast<uint8_t>(RAKP_ReturnCode::INACTIVE_ROLE);
+-        logInvalidLoginRedfishEvent(message);
++        logInvalidLoginRedfishEvent(message, ipStr);
+         return outPayload;
+     }
+     session->channelNum(chNum);
+@@ -279,7 +285,7 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+         response->rmcpStatusCode =
+             static_cast<uint8_t>(RAKP_ReturnCode::UNAUTH_NAME);
+ 
+-        logInvalidLoginRedfishEvent(message);
++        logInvalidLoginRedfishEvent(message, ipStr);
+         return outPayload;
+     }
+ 
+diff --git a/command/rakp12.hpp b/command/rakp12.hpp
+index e2eebc2..8875c31 100644
+--- a/command/rakp12.hpp
++++ b/command/rakp12.hpp
+@@ -81,7 +81,7 @@ std::vector<uint8_t> RAKP12(const std::vector<uint8_t>& inPayload,
+  * @param[in] redfishMsg - Log Redfish Event Message
+  *
+  */
+-void logInvalidLoginRedfishEvent(
+-    const std::string& journalMsg,
+-    const std::optional<std::string>& messageArgs = "RMCPP");
++void logInvalidLoginRedfishEvent(const std::string& journalMsg,
++                                 const std::string& ipStr,
++                                 const std::string& messageFrom);
+ } // namespace command
+diff --git a/message_handler.cpp b/message_handler.cpp
+index b7365bb..3630f31 100644
+--- a/message_handler.cpp
++++ b/message_handler.cpp
+@@ -14,6 +14,9 @@
+ #include <string>
+ #include <vector>
+ 
++#include <arpa/inet.h>
++#include <netinet/in.h>
++
+ namespace message
+ {
+ 
+@@ -230,4 +233,56 @@ void Handler::sendUnsolicitedIPMIPayload(uint8_t netfn, uint8_t cmd,
+     send(outMessage);
+ }
+ 
++std::optional<std::string> Handler::getRemoteAddress() const
++{
++    if (!channel) return std::nullopt;
++
++    uint32_t remoteIpv4Addr = 0;
++    // channel fills remoteIpv4Addr and returns textual IP (may be IPv6)
++    std::string textual = channel->getRemoteAddress(remoteIpv4Addr);
++
++    // If channel provided an IPv4 value (network byte order), use it.
++    if (remoteIpv4Addr != 0)
++    {
++        struct in_addr addr;
++        addr.s_addr = remoteIpv4Addr; // channel already wrote network-order s_addr
++        char buf[INET_ADDRSTRLEN];
++        if (inet_ntop(AF_INET, &addr, buf, sizeof(buf)) != nullptr)
++        {
++            return std::string(buf);
++        }
++        // inet_ntop failure: fall through to nullopt
++    }
++
++    if (!textual.empty())
++    {
++        struct in_addr v4;
++        if (inet_pton(AF_INET, textual.c_str(), &v4) == 1)
++        {
++            char buf[INET_ADDRSTRLEN];
++            inet_ntop(AF_INET, &v4, buf, sizeof(buf));
++            return std::string(buf);
++        }
++        // detect IPv4-mapped IPv6 ::ffff:a.b.c.d
++        struct in6_addr v6;
++        if (inet_pton(AF_INET6, textual.c_str(), &v6) == 1)
++        {
++            const uint8_t* b = v6.s6_addr;
++            bool isMapped = (memcmp(b, "\0\0\0\0\0\0\0\0\0\0\xff\xff", 12) == 0);
++            if (isMapped)
++            {
++                struct in_addr mapped;
++                memcpy(&mapped.s_addr, &b[12], 4);
++                char buf[INET_ADDRSTRLEN];
++                if (inet_ntop(AF_INET, &mapped, buf, sizeof(buf)) != nullptr)
++                {
++                    return std::string(buf);
++                }
++            }
++        }
++    }
++
++    return std::nullopt;
++}
++
+ } // namespace message
+diff --git a/message_handler.hpp b/message_handler.hpp
+index c1a7032..28c4d21 100644
+--- a/message_handler.hpp
++++ b/message_handler.hpp
+@@ -90,6 +90,9 @@ class Handler : public std::enable_shared_from_this<Handler>
+     /** @brief response to send back */
+     std::optional<std::vector<uint8_t>> outPayload;
+ 
++    /** @brief get remote ip address */
++    std::optional<std::string> getRemoteAddress() const;
++
+   private:
+     /**
+      * @brief Receive the IPMI packet
+-- 
+2.43.0
+

@@ -1,0 +1,187 @@
+From 783b169faf8138e32f075dc7cccf3236e3ddd698 Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Mon, 14 Sep 2026 02:30:25 +0000
+Subject: [PATCH] common: publish initial software state and D-Bus interfaces
+
+Mark the current software as Active and create the running/ran_on
+inventory association after device initialization succeeds. Do not
+publish the active state when initialization fails or the device was
+not inserted.
+
+Emit InterfacesAdded after initializing the properties for Activation,
+ActivationProgress, ActivationBlocksTransition, and Association
+Definitions. Avoid creating an empty association interface when the
+inventory endpoint cannot be found.
+
+Emit InterfacesAdded and InterfacesRemoved for the Software.Update
+interface and make its wrapper non-copyable and non-movable to preserve
+the D-Bus interface lifecycle.
+
+Adapted from reference commits:
+- d73d5642d9e0ea2a678a01602cd5a1e3b5a8411b
+- 0fdb61247161faacd9ef093fd6a9b7823eb364a7
+- 8b4ab1e4402dadb5cbd1a1e41298a522ac16e69d
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ common/include/software_update.hpp |  6 ++++++
+ common/src/software.cpp            | 29 +++++++++++++++++++----------
+ common/src/software_manager.cpp    | 21 ++++++++++++++++++---
+ common/src/software_update.cpp     |  9 ++++++++-
+ 4 files changed, 51 insertions(+), 14 deletions(-)
+
+diff --git a/common/include/software_update.hpp b/common/include/software_update.hpp
+index 58e0f57..37123d5 100644
+--- a/common/include/software_update.hpp
++++ b/common/include/software_update.hpp
+@@ -19,10 +19,16 @@ class SoftwareUpdate :
+         SoftwareUpdate>
+ {
+   public:
++    SoftwareUpdate(const SoftwareUpdate&) = delete;
++    SoftwareUpdate(SoftwareUpdate&&) = delete;
++    SoftwareUpdate& operator=(const SoftwareUpdate&) = delete;
++    SoftwareUpdate& operator=(SoftwareUpdate&&) = delete;
+     SoftwareUpdate(sdbusplus::async::context& ctx, const char* path,
+                    Software& software,
+                    const std::set<RequestedApplyTimes>& allowedApplyTimes);
+ 
++    ~SoftwareUpdate();
++
+     auto method_call(start_update_t su, auto image, auto applyTime)
+         -> sdbusplus::async::task<start_update_t::return_type>;
+ 
+diff --git a/common/src/software.cpp b/common/src/software.cpp
+index 504a9ae..d49a138 100644
+--- a/common/src/software.cpp
++++ b/common/src/software.cpp
+@@ -27,6 +27,7 @@ SoftwareActivationProgress::SoftwareActivationProgress(
+     // value(s)"
+     // when properties are updated for the first time
+     progress_ = 0;
++    emit_added();
+ }
+ 
+ void SoftwareActivationProgress::setProgress(int progressArg)
+@@ -49,6 +50,8 @@ Software::Software(sdbusplus::async::context& ctx, Device& parent,
+     activation_ = Activations::NotReady;
+     requested_activation_ = RequestedActivations::None;
+ 
++    emit_added();
++
+     std::string objPath = baseObjPathSoftware + swid;
+ 
+     debug("{SWID}: created dbus interfaces on path {OBJPATH}", "SWID", swid,
+@@ -83,21 +86,15 @@ sdbusplus::async::task<> Software::createInventoryAssociations(bool isRunning)
+     }
+     catch (std::exception& e)
+     {
+-        error(e.what());
+-    }
+-
+-    if (!associationDefinitions)
+-    {
+-        std::string path = objectPath;
+-        associationDefinitions =
+-            std::make_unique<SoftwareAssociationDefinitions>(ctx, path.c_str());
++        error("Failed to create association with {ERROR}", "ERROR", e.what());
++        co_return;
+     }
+ 
+     std::vector<std::tuple<std::string, std::string, std::string>> assocs;
+ 
+     if (endpoint.empty())
+     {
+-        associationDefinitions->associations(assocs);
++        error("Failed to create association: inventory endpoint is empty");
+         co_return;
+     }
+ 
+@@ -118,7 +115,18 @@ sdbusplus::async::task<> Software::createInventoryAssociations(bool isRunning)
+         assocs.push_back(assocActivating);
+     }
+ 
+-    associationDefinitions->associations(assocs);
++    if (associationDefinitions)
++    {
++        associationDefinitions->associations(assocs);
++    }
++    else
++    {
++        std::string path = objectPath;
++        associationDefinitions =
++            std::make_unique<SoftwareAssociationDefinitions>(ctx, path.c_str());
++        associationDefinitions->associations(assocs);
++        associationDefinitions->emit_added();
++    }
+ 
+     co_return;
+ }
+@@ -161,6 +169,7 @@ void Software::setActivationBlocksTransition(bool enabled)
+     std::string path = objectPath;
+     activationBlocksTransition =
+         std::make_unique<SoftwareActivationBlocksTransition>(ctx, path.c_str());
++    activationBlocksTransition->emit_added();
+ }
+ 
+ void Software::setActivation(SoftwareActivation::Activations act)
+diff --git a/common/src/software_manager.cpp b/common/src/software_manager.cpp
+index 2173458..07f1f13 100644
+--- a/common/src/software_manager.cpp
++++ b/common/src/software_manager.cpp
+@@ -169,14 +169,29 @@ sdbusplus::async::task<void> SoftwareManager::handleInterfaceAdded(
+         co_return;
+     }
+ 
+-    if (devices.contains(optConfig.value().objectPath))
++    auto& config = optConfig.value();
++
++    if (devices.contains(config.objectPath))
+     {
+         error("Device configured from {PATH} is already known", "PATH",
+-              optConfig.value().objectPath);
++              config.objectPath);
+         co_return;
+     }
+ 
+-    co_await initDevice(service, path, optConfig.value());
++    const bool accepted = co_await initDevice(service, path, config);
++
++    if (accepted && devices.contains(config.objectPath))
++    {
++        auto& device = devices[config.objectPath];
++
++        if (device->softwareCurrent)
++        {
++            co_await device->softwareCurrent->createInventoryAssociations(true);
++
++            device->softwareCurrent->setActivation(
++                SoftwareActivation::Activations::Active);
++        }
++    }
+ 
+     co_return;
+ }
+diff --git a/common/src/software_update.cpp b/common/src/software_update.cpp
+index ee2f572..6662a78 100644
+--- a/common/src/software_update.cpp
++++ b/common/src/software_update.cpp
+@@ -28,7 +28,14 @@ SoftwareUpdate::SoftwareUpdate(
+     sdbusplus::aserver::xyz::openbmc_project::software::Update<SoftwareUpdate>(
+         ctx, path),
+     software(software), allowedApplyTimes(allowedApplyTimes)
+-{}
++{
++    emit_added();
++}
++
++SoftwareUpdate::~SoftwareUpdate()
++{
++    emit_removed();
++}
+ 
+ auto SoftwareUpdate::method_call(start_update_t /*unused*/, auto image,
+                                  auto applyTime)
+-- 
+2.43.0
+

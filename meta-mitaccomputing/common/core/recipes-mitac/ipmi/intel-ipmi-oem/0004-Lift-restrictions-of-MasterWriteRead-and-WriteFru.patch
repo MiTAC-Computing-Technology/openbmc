@@ -1,0 +1,47 @@
+From 09064175cb5101fb029d5926263b92da110fb6af Mon Sep 17 00:00:00 2001
+From: "fredy.chen" <fredy.chen@mitaccomputing.com>
+Date: Fri, 22 May 2026 04:04:16 -0400
+Subject: [PATCH] Lift restrictions of MasterWriteRead and WriteFru commands.
+
+Tested:
+ipmitool raw 0x06 0x52 0x02 0xA0 0x08
+ipmitool fru write <ID> <fru.bin>
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/manufacturingcommands.cpp | 12 ------------
+ 1 file changed, 12 deletions(-)
+
+diff --git a/src/manufacturingcommands.cpp b/src/manufacturingcommands.cpp
+index e27b481..b7eb2c4 100644
+--- a/src/manufacturingcommands.cpp
++++ b/src/manufacturingcommands.cpp
+@@ -836,17 +836,6 @@ ipmi::Cc mfgFilterMessage(ipmi::message::Request::ptr request)
+     // Restricted commands, must be executed only in Manufacturing mode
+     switch (makeCmdKey(request->ctx->netFn, request->ctx->cmd))
+     {
+-        // i2c controller write read command needs additional checking
+-        case makeCmdKey(ipmi::netFnApp, ipmi::app::cmdMasterWriteRead):
+-            if (request->payload.size() > 4)
+-            {
+-                // Allow write data count > 1 only in Special mode
+-                if (mtm.getMfgMode() == SpecialMode::none)
+-                {
+-                    return ipmi::ccInsufficientPrivilege;
+-                }
+-            }
+-            return ipmi::ccSuccess;
+         case makeCmdKey(ipmi::netFnOemOne,
+                         ipmi::intel::general::cmdGetSmSignal):
+         case makeCmdKey(ipmi::netFnOemOne,
+@@ -861,7 +850,6 @@ ipmi::Cc mfgFilterMessage(ipmi::message::Request::ptr request)
+                         ipmi::intel::general::cmdSetFITcLayout):
+         case makeCmdKey(ipmi::netFnOemOne,
+                         ipmi::intel::general::cmdMTMBMCFeatureControl):
+-        case makeCmdKey(ipmi::netFnStorage, ipmi::storage::cmdWriteFruData):
+         case makeCmdKey(ipmi::netFnOemTwo, ipmi::intel::platform::cmdClearCMOS):
+ 
+             // Check for Special mode
+-- 
+2.34.1
+

@@ -1,0 +1,113 @@
+{
+  "Exposes": [
+    {
+      "ConnectsToType": "PMBus Upstream Port",
+      "Name": "PSU $ADDRESS % 80 Downstream Port",
+      "Type": "DownstreamPort",
+      "PowerPort": true
+    },
+    {
+      "Address": "$address",
+      "Bus": "$bus",
+      "Name": "PSU $ADDRESS % 80 FRU",
+      "Type": "EEPROM_24C02"
+    },
+    {
+      "Address": "$ADDRESS + 8",
+      "Bus": "$bus",
+      "Labels": [
+        "temp1",
+        "pin",
+        "pout1",
+        "vin",
+        "vout1",
+        "iin",
+        "iout1",
+        "rated_maxpout1"
+      ],
+      "Name": "PSU $ADDRESS % 80",
+      "PollRate": 10,
+      "Thresholds": [
+        {
+          "Direction": "greater than",
+          "Label": "temp1",
+          "Name": "upper critical",
+          "Severity": 1,
+          "Value": 65
+        },
+        {
+          "Direction": "less than",
+          "Label": "temp1",
+          "Name": "lower critical",
+          "Severity": 1,
+          "Value": -5
+        },
+        {
+          "Direction": "greater than",
+          "Label": "vout1",
+          "Name": "upper critical",
+          "Severity": 1,
+          "Value": 59.4
+        },
+        {
+          "Direction": "greater than",
+          "Label": "vout1",
+          "Name": "upper non critical",
+          "Severity": 0,
+          "Value": 56.7
+        },
+        {
+          "Direction": "less than",
+          "Label": "vout1",
+          "Name": "lower non critical",
+          "Severity": 0,
+          "Value": 51.3
+        },
+        {
+          "Direction": "less than",
+          "Label": "vout1",
+          "Name": "lower critical",
+          "Severity": 1,
+          "Value": 48.6
+        }
+      ],
+      "Type": "pmbus",
+      "iin_Name": "PSU $ADDRESS % 80 IIN CURR_A",
+      "iout1_Name": "PSU $ADDRESS % 80 IOUT CURR_A",
+      "pin_Name": "PSU $ADDRESS % 80 PIN PWR_W",
+      "pout1_Name": "PSU $ADDRESS % 80 POUT PWR_W",
+      "rated_maxpout1_Name": "PSU $ADDRESS % 80 POUT1 CAP PWR_W",
+      "temp1_Name": "PSU $ADDRESS % 80 TEMP_C",
+      "vin_Name": "PSU $ADDRESS % 80 VIN VOLT_V",
+      "vout1_Name": "PSU $ADDRESS % 80 VOUT VOLT_V"
+    }
+  ],
+  "Name": "PSU $ADDRESS % 80",
+  "Probe": "xyz.openbmc_project.FruDevice({'PRODUCT_MANUFACTURER': 'DELTA-*', 'PRODUCT_PRODUCT_NAME': 'TDPS-5200BB*'})",
+  "Type": "PowerSupply",
+  "xyz.openbmc_project.Inventory.Decorator.Asset": {
+    "Manufacturer": "$PRODUCT_MANUFACTURER",
+    "Model": "$PRODUCT_PRODUCT_NAME",
+    "PartNumber": "$PRODUCT_PART_NUMBER",
+    "SerialNumber": "$PRODUCT_SERIAL_NUMBER",
+    "PowerSupplyExtInfo": "$MULTIRECORD_PsExt"
+  },
+  "xyz.openbmc_project.Inventory.Decorator.AssetTag": {
+    "AssetTag": "$PRODUCT_ASSET_TAG"
+  },
+  "xyz.openbmc_project.Software.Version": {
+    "Version": "$PRODUCT_VERSION"
+  },
+  "xyz.openbmc_project.Inventory.Decorator.Replaceable": {
+    "FieldReplaceable": true,
+    "HotPluggable": true
+  },
+  "xyz.openbmc_project.Inventory.Decorator.I2CDevice": {
+    "Address": "$ADDRESS",
+    "Bus": "$BUS"
+  },
+  "xyz.openbmc_project.Inventory.Decorator.Ipmi": {
+    "EntityId": 10,
+    "EntityInstance": "$ADDRESS % 80"
+  }
+}

@@ -1,0 +1,245 @@
+From a3446e47511d9f8eac5e10cd4c0f707252bacaa6 Mon Sep 17 00:00:00 2001
+From: Allen Kang <allen.kang@mitaccomputing>
+Date: Wed, 24 Jun 2026 10:06:05 +0000
+Subject: [PATCH] Correct GPIO pass-through restoration point.
+
+Relocate the enablePassThrough(true) logic from nmiReset() to the
+end of sendPowerControlEvent(). The preevious misplaced logic caused the
+GPIO pass-through function to stay disable after a power control,
+making the physical buttons completely unresponsive.
+
+Also applied clang-format to fix formatting inconsistencies, across
+the modified blocks.
+
+Tested:
+Force power off via power button works, and pass-through recovers
+normally afterward to allow subsequent button operations.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/power_control.cpp | 108 ++++++++++++++++++++++++------------------
+ 1 file changed, 63 insertions(+), 45 deletions(-)
+
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+index e6f836d..e13156b 100644
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -233,10 +233,11 @@ static std::optional<bool> passThroughCurrentState;
+ 
+ void enablePassThrough(bool enable)
+ {
+-
+-    if (passThroughCurrentState.has_value() && enable == passThroughCurrentState.value())
++    if (passThroughCurrentState.has_value() &&
++        enable == passThroughCurrentState.value())
+     {
+-        lg2::info("Pass-through already in desired state: {STATE}", "STATE", enable);
++        lg2::info("Pass-through already in desired state: {STATE}", "STATE",
++                  enable);
+         return;
+     }
+ 
+@@ -269,7 +270,8 @@ static void setOperatingSystemState(const OperatingSystemOSStatus stage)
+         ignoreNextSoftReset = false;
+     }
+ #endif
+-    std::string stageName = OperatingSystemStatus::convertOSStatusToString(stage);
++    std::string stageName =
++        OperatingSystemStatus::convertOSStatusToString(stage);
+     osIface->set_property("OperatingSystemState", stageName);
+     appState.set(PersistentState::Params::OperatingSystemOSStatus, stageName);
+ 
+@@ -281,17 +283,24 @@ static std::string propBootProgress;
+ 
+ static int handleBootProgressStageChange(const BootProgressStages progress)
+ {
+-    // Do not call bootProgressIface->set_property("BootProgress", bootProgressStageName) to avoid recursive
+-    std::string bootProgressStageName = BootProgress::convertProgressStagesToString(progress);
++    // Do not call bootProgressIface->set_property("BootProgress",
++    // bootProgressStageName) to avoid recursive
++    std::string bootProgressStageName =
++        BootProgress::convertProgressStagesToString(progress);
+     if (bootProgressStageName != propBootProgress)
+     {
+         // Update BootProgressLastUpdate timestamp.
+-        lg2::info("Host{HOST}: BootProgressStage moving to \"{PROGRESS}\" state", "HOST", node, "PROGRESS", bootProgressStageName);
+-        std::uint64_t bootProgressLastUpdate = std::chrono::duration_cast<std::chrono::microseconds>(
+-                             std::chrono::system_clock::now().time_since_epoch())
+-                             .count();
+-        bootProgressIface->set_property("BootProgressLastUpdate", bootProgressLastUpdate);
+-        appState.set(PersistentState::Params::BootProgressStages, bootProgressStageName);
++        lg2::info(
++            "Host{HOST}: BootProgressStage moving to \"{PROGRESS}\" state",
++            "HOST", node, "PROGRESS", bootProgressStageName);
++        std::uint64_t bootProgressLastUpdate =
++            std::chrono::duration_cast<std::chrono::microseconds>(
++                std::chrono::system_clock::now().time_since_epoch())
++                .count();
++        bootProgressIface->set_property("BootProgressLastUpdate",
++                                        bootProgressLastUpdate);
++        appState.set(PersistentState::Params::BootProgressStages,
++                     bootProgressStageName);
+         propBootProgress = bootProgressStageName;
+         // Update OperatingSystemState if necessary
+         switch (progress)
+@@ -310,7 +319,9 @@ static int handleBootProgressStageChange(const BootProgressStages progress)
+                 setOperatingSystemState(OperatingSystemOSStatus::Standby);
+                 break;
+             default:
+-                lg2::info("Host{HOST}: \"{PROGRESS}\" doesn't impact OperatingSystemOSStatus.", "HOST", node, "PROGRESS", bootProgressStageName);
++                lg2::info(
++                    "Host{HOST}: \"{PROGRESS}\" doesn't impact OperatingSystemOSStatus.",
++                    "HOST", node, "PROGRESS", bootProgressStageName);
+                 break;
+         }
+     }
+@@ -318,10 +329,12 @@ static int handleBootProgressStageChange(const BootProgressStages progress)
+ }
+ static int updateBootProgressStage(const BootProgressStages progress)
+ {
+-    std::string bootProgressStageName = BootProgress::convertProgressStagesToString(progress);
++    std::string bootProgressStageName =
++        BootProgress::convertProgressStagesToString(progress);
+     if (!bootProgressIface->set_property("BootProgress", bootProgressStageName))
+     {
+-        lg2::warning("Host{HOST}: updateBootProgressStage failed.", "HOST", node);
++        lg2::warning("Host{HOST}: updateBootProgressStage failed.", "HOST",
++                     node);
+         return -1;
+     }
+     return 0;
+@@ -569,6 +582,15 @@ static void sendPowerControlEvent(const Event event)
+         return;
+     }
+     handler(event);
++
++    lg2::info("enablePassThrough called in sendPowerControlEvent");
++    if (powerState != PowerState::cycleOff &&
++        powerState != PowerState::transitionToOff &&
++        powerState != PowerState::transitionToCycleOff &&
++        powerState != PowerState::gracefulTransitionToCycleOff)
++    {
++        enablePassThrough(true);
++    }
+ }
+ 
+ static uint64_t getCurrentTimeMs()
+@@ -1980,7 +2002,8 @@ static void powerStateGracefulTransitionToOff(const Event event)
+         {
+             if (FcbStbyEnabled == true)
+             {
+-                lg2::info("Use sioS5Assert to replace psPowerOKDeAssert when FcbStbyEnabled is activated.");
++                lg2::info(
++                    "Use sioS5Assert to replace psPowerOKDeAssert when FcbStbyEnabled is activated.");
+                 gracefulPowerOffTimer.cancel();
+                 setPowerState(PowerState::off);
+                 break;
+@@ -2275,17 +2298,6 @@ static void nmiReset(void)
+                            ec.message());
+             }
+         }
+-
+-        lg2::info("enablePassThrough called in currentHostStateMonitor, current PowerState: {STATE}",
+-          "STATE", getPowerStateName(powerState));
+-        if (powerState != PowerState::cycleOff &&
+-            powerState != PowerState::transitionToOff &&
+-            powerState != PowerState::transitionToCycleOff &&
+-            powerState != PowerState::gracefulTransitionToCycleOff)
+-        {
+-            enablePassThrough(true);
+-        }
+-
+     });
+     // log to redfish
+     nmiDiagIntLog();
+@@ -3118,7 +3130,8 @@ int main(int argc, char* argv[])
+     if (!fcbStbyEnConfig.lineName.empty())
+     {
+         FcbStbyEnabled = true;
+-        lg2::info("Activate Fan Control during S5 Power State. PSU might report power  good.");
++        lg2::info(
++            "Activate Fan Control during S5 Power State. PSU might report power  good.");
+         if (!setGPIOOutput(fcbStbyEnConfig.lineName, fcbStbyEnConfig.polarity,
+                            fcbStbyEnLine))
+         {
+@@ -3131,7 +3144,7 @@ int main(int argc, char* argv[])
+         lg2::info("powerOkConfig.type gpio.");
+         if ((FcbStbyEnabled == false && psPowerOKLine.get_value() > 0) ||
+             (sioEnabled &&
+-            (sioPowerGoodLine.get_value() == sioPwrGoodConfig.polarity)))
++             (sioPowerGoodLine.get_value() == sioPwrGoodConfig.polarity)))
+         {
+             powerState = PowerState::on;
+         }
+@@ -3703,23 +3716,28 @@ int main(int argc, char* argv[])
+ 
+     if (postCompleteConfig.type == ConfigType::GPIO)
+     {
+-        propBootProgress = postCompleteLine.get_value() == postCompleteConfig.polarity
+-                      ? BootProgress::convertProgressStagesToString(BootProgressStages::SystemInitComplete)
+-                      : BootProgress::convertProgressStagesToString(BootProgressStages::Unspecified);
++        propBootProgress =
++            postCompleteLine.get_value() == postCompleteConfig.polarity
++                ? BootProgress::convertProgressStagesToString(
++                      BootProgressStages::SystemInitComplete)
++                : BootProgress::convertProgressStagesToString(
++                      BootProgressStages::Unspecified);
+     }
+     else
+     {
+         propBootProgress = getProperty(postCompleteConfig) > 0
+-                      ? BootProgress::convertProgressStagesToString(BootProgressStages::SystemInitComplete)
+-                      : BootProgress::convertProgressStagesToString(BootProgressStages::Unspecified);
++                               ? BootProgress::convertProgressStagesToString(
++                                     BootProgressStages::SystemInitComplete)
++                               : BootProgress::convertProgressStagesToString(
++                                     BootProgressStages::Unspecified);
+     }
+     lg2::info("propBootProgress: {PROGRESS}", "PROGRESS", propBootProgress);
+ 
+     bootProgressIface->register_property(
+-        "BootProgress",
+-        propBootProgress,
++        "BootProgress", propBootProgress,
+         [&](const std::string& requested, std::string& resp) {
+-            std::optional<BootProgressStages> progressStage = BootProgress::convertStringToProgressStages(requested);
++            std::optional<BootProgressStages> progressStage =
++                BootProgress::convertStringToProgressStages(requested);
+             if (progressStage.has_value())
+             {
+                 handleBootProgressStageChange(progressStage.value());
+@@ -3728,23 +3746,23 @@ int main(int argc, char* argv[])
+             }
+             else
+             {
+-                lg2::warning("Received invalid stage: {PROGRESS} in request.", "PROGRESS", requested);
++                lg2::warning("Received invalid stage: {PROGRESS} in request.",
++                             "PROGRESS", requested);
+                 return 0;
+             }
+-        }
+-    );
++        });
+ 
+-    std::uint64_t bootProgressLastUpdate = std::chrono::duration_cast<std::chrono::microseconds>(
+-                         std::chrono::system_clock::now().time_since_epoch())
+-                         .count();
++    std::uint64_t bootProgressLastUpdate =
++        std::chrono::duration_cast<std::chrono::microseconds>(
++            std::chrono::system_clock::now().time_since_epoch())
++            .count();
+     bootProgressIface->register_property(
+         "BootProgressLastUpdate", bootProgressLastUpdate,
+         [&](auto& newValue, std::uint64_t oldValue) {
+             bootProgressLastUpdate = newValue;
+             oldValue = newValue;
+             return 1;
+-        }
+-    );
++        });
+ 
+     bootProgressIface->initialize();
+ 
+-- 
+2.34.1
+

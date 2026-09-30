@@ -154,6 +154,11 @@
 };
 &i2c10 {
         status = "okay";
+		// MB FRU for C2810Z5 MPH
+		eeprom@50 {
+			compatible = "atmel,24c256";
+			reg = <0x50>;
+		};
 };
 &i2c11 {
         status = "okay";

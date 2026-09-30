@@ -1,0 +1,3 @@
+/var/lib/smbios
+/var/oob
+/var/log/bmc_boot_reason_logged

@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vincent Yen <vincent.yen@mitaccomputing.com>
+Date: Wed, 26 Aug 2026 12:00:00 -0400
+Subject: [PATCH] Software: Update: add StartUpdateOptions
+
+Add an update method that accepts per-update apply options in addition to
+the image file descriptor and requested apply time.  The dictionary keeps
+the interface extensible while documenting the currently supported Redfish
+update option keys and their value types.
+
+Keep StartUpdate unchanged for backward compatibility.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+Signed-off-by: Vincent Yen <vincent.yen@mitaccomputing.com>
+---
+ .../Software/Update.interface.yaml            | 35 +++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/yaml/xyz/openbmc_project/Software/Update.interface.yaml b/yaml/xyz/openbmc_project/Software/Update.interface.yaml
+index b2f11d1..c407422 100644
+--- a/yaml/xyz/openbmc_project/Software/Update.interface.yaml
++++ b/yaml/xyz/openbmc_project/Software/Update.interface.yaml
+@@ -29,6 +29,41 @@ methods:
+           - xyz.openbmc_project.Software.Update.Error.InvalidImage
+           - xyz.openbmc_project.Common.Error.Unavailable
+ 
++    - name: StartUpdateOptions
++      description: >
++          Start a firmware update to be performed asynchronously with
++          per-update apply options.
++      parameters:
++          - name: Image
++            type: unixfd
++            description: >
++                This property indicates the file descriptor of the firmware
++                image.
++          - name: ApplyTime
++            type: enum[xyz.openbmc_project.Software.ApplyTime.RequestedApplyTimes]
++            description: >
++                This property indicates when the software image update should
++                be applied.
++          - name: Options
++            type: dict[string,variant[boolean,string,uint64]]
++            description: >
++                Supported entries are ResetSettingsToDefault with a boolean
++                value, MaintenanceWindowStartTime with a Redfish date-time
++                string value, and MaintenanceWindowDurationInSeconds with a
++                uint64 value.
++      returns:
++          - name: ObjectPath
++            type: object_path
++            description: >
++                The object path where the image interfaces will be hosted, for
++                example, required interfaces such as ActivationStatus,
++                ActivationProgress and optional interfaces such as Version.
++      errors:
++          - xyz.openbmc_project.Software.Update.Error.Incompatible
++          - xyz.openbmc_project.Software.Update.Error.InvalidSignature
++          - xyz.openbmc_project.Software.Update.Error.InvalidImage
++          - xyz.openbmc_project.Common.Error.Unavailable
++
+ properties:
+     - name: AllowedApplyTimes
+       type: set[enum[xyz.openbmc_project.Software.ApplyTime.RequestedApplyTimes]]
+-- 
+2.43.0

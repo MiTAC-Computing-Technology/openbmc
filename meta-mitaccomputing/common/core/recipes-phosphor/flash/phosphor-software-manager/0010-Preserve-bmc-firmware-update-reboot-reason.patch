@@ -1,0 +1,218 @@
+From e8c177dd02ebf99e7d269f628ed9cbe2e7fd1bd2 Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Wed, 5 Aug 2026 07:53:32 +0000
+Subject: [PATCH] Preserve bmc firmware update reboot reason
+
+Store the firmware update reboot reason in a marker file so that
+phosphor-state-manager can report the correct Redfish boot reason
+after the BMC restarts.
+
+Only create the BMC firmware update marker for BMC images to avoid
+treating BIOS updates as BMC updates.
+
+Remove an invalid boot reason marker if writing the marker or requesting
+the systemd reboot job fails.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ bmc/activation.cpp         | 33 +++++++++++++++++++-------
+ bmc/activation.hpp         |  3 +--
+ bmc/boot_reason_marker.cpp | 48 ++++++++++++++++++++++++++++++++++++++
+ bmc/boot_reason_marker.hpp | 13 +++++++++++
+ bmc/meson.build            | 13 +++++++++--
+ 5 files changed, 98 insertions(+), 12 deletions(-)
+ create mode 100644 bmc/boot_reason_marker.cpp
+ create mode 100644 bmc/boot_reason_marker.hpp
+
+diff --git a/bmc/activation.cpp b/bmc/activation.cpp
+index 1dfdabe..a0fc4e3 100644
+--- a/bmc/activation.cpp
++++ b/bmc/activation.cpp
+@@ -1,5 +1,6 @@
+ #include "activation.hpp"
+ 
++#include "boot_reason_marker.hpp"
+ #include "images.hpp"
+ #include "item_updater.hpp"
+ #include "msl_verify.hpp"
+@@ -38,6 +39,8 @@ using namespace phosphor::logging;
+ using InternalFailure =
+     sdbusplus::error::xyz::openbmc_project::common::InternalFailure;
+ 
++constexpr auto bootReasonMarkerPath = "/var/log/bmc_boot_reason_logged";
++
+ #if defined(WANT_SIGNATURE_VERIFY) || defined(WANT_MITAC_SIGNATURE_VERIFY)
+ namespace control = sdbusplus::server::xyz::openbmc_project::control;
+ #endif
+@@ -84,8 +87,7 @@ void Activation::unsubscribeFromSystemdSignals()
+     return;
+ }
+ 
+-void Activation::redfishLog(const std::string& id, const std::string& message,
+-                            const bool isBmcReboot)
++void Activation::redfishLog(const std::string& id, const std::string& message)
+ {
+     auto version = parent.versions.find(versionId)->second->version();
+     auto purpose = parent.versions.find(versionId)->second->purpose();
+@@ -104,7 +106,7 @@ void Activation::redfishLog(const std::string& id, const std::string& message,
+         target = "Unknown";
+     }
+ 
+-    if (isBmcReboot)
++    if (id == "FirmwareUpdateStarted" && purpose == VersionPurpose::BMC)
+     {
+         constexpr auto bmcFirmwareUpdateInprogress =
+             "/var/log/bmcFirmwareUpdateInprogress";
+@@ -123,8 +125,6 @@ void Activation::redfishLog(const std::string& id, const std::string& message,
+                       bmcFirmwareUpdateInprogress);
+             }
+         }
+-        version = phosphor::software::manager::Version::getBMCVersion(
+-            OS_RELEASE_FILE);
+     }
+ 
+     redfish::firmwareUpdate(id, target, version, message);
+@@ -317,9 +317,26 @@ void Activation::onFlashWriteSuccess()
+     if (Activation::checkApplyTimeImmediate())
+     {
+         info("Image Active and ApplyTime is immediate; rebooting BMC.");
+-        redfishLog("BMCBootReason", "firmware update", true);
+-        redfishLog("FirmwareUpdateStarted", "Start the firmware update");
+-        Activation::rebootBmc();
++        const bool markerCreated =
++            boot_reason::writeMarker(bootReasonMarkerPath, "firmware update");
++        if (!markerCreated)
++        {
++            redfishLog("BMCBootReason", "firmware update");
++        }
++
++        try
++        {
++            redfishLog("FirmwareUpdateStarted", "Start the firmware update");
++            Activation::rebootBmc();
++        }
++        catch (...)
++        {
++            if (markerCreated)
++            {
++                boot_reason::removeMarker(bootReasonMarkerPath);
++            }
++            throw;
++        }
+     }
+     else
+     {
+diff --git a/bmc/activation.hpp b/bmc/activation.hpp
+index a763956..130aed3 100644
+--- a/bmc/activation.hpp
++++ b/bmc/activation.hpp
+@@ -312,8 +312,7 @@ class Activation : public ActivationInherit, public Flash
+     void rebootBmc();
+ 
+   private:
+-    void redfishLog(const std::string& id, const std::string& message,
+-                    bool isBmcReboot = false);
++    void redfishLog(const std::string& id, const std::string& message);
+ 
+     /** @brief Schedule cleanup of the uploaded activation object. */
+     void scheduleUploadActivationCleanup();
+diff --git a/bmc/boot_reason_marker.cpp b/bmc/boot_reason_marker.cpp
+new file mode 100644
+index 0000000..fbec7e2
+--- /dev/null
++++ b/bmc/boot_reason_marker.cpp
+@@ -0,0 +1,48 @@
++#include "boot_reason_marker.hpp"
++
++#include <phosphor-logging/lg2.hpp>
++
++#include <fstream>
++#include <system_error>
++
++namespace phosphor::software::boot_reason
++{
++
++PHOSPHOR_LOG2_USING;
++
++bool removeMarker(const std::filesystem::path& path)
++{
++    std::error_code ec;
++    std::filesystem::remove(path, ec);
++    if (ec)
++    {
++        error("Failed to remove {FILE}: {ERROR}", "FILE", path.string(),
++              "ERROR", ec.message());
++        return false;
++    }
++
++    return true;
++}
++
++bool writeMarker(const std::filesystem::path& path, const std::string& message)
++{
++    std::ofstream markerFile(path, std::ios::out | std::ios::trunc);
++    if (!markerFile)
++    {
++        error("Failed to create {FILE}", "FILE", path.string());
++        return false;
++    }
++
++    markerFile << message;
++    markerFile.close();
++    if (!markerFile)
++    {
++        error("Failed to write {FILE}", "FILE", path.string());
++        removeMarker(path);
++        return false;
++    }
++
++    return true;
++}
++
++} // namespace phosphor::software::boot_reason
+diff --git a/bmc/boot_reason_marker.hpp b/bmc/boot_reason_marker.hpp
+new file mode 100644
+index 0000000..62666cc
+--- /dev/null
++++ b/bmc/boot_reason_marker.hpp
+@@ -0,0 +1,13 @@
++#pragma once
++
++#include <filesystem>
++#include <string>
++
++namespace phosphor::software::boot_reason
++{
++
++bool writeMarker(const std::filesystem::path& path, const std::string& message);
++
++bool removeMarker(const std::filesystem::path& path);
++
++} // namespace phosphor::software::boot_reason
+diff --git a/bmc/meson.build b/bmc/meson.build
+index d1319a5..48b431d 100644
+--- a/bmc/meson.build
++++ b/bmc/meson.build
+@@ -109,8 +109,17 @@ unit_files = [
+     'xyz.openbmc_project.Software.Sync.service.in',
+ ]
+ 
+-image_updater_sources = files('activation.cpp', 'images.cpp', 'item_updater.cpp', 'msl_verify.cpp', 'serialize.cpp', 'update_manager.cpp'
+-, 'utils.cpp', 'version.cpp')
++image_updater_sources = files(
++    'activation.cpp',
++    'boot_reason_marker.cpp',
++    'images.cpp',
++    'item_updater.cpp',
++    'msl_verify.cpp',
++    'serialize.cpp',
++    'update_manager.cpp',
++    'utils.cpp',
++    'version.cpp',
++)
+ 
+ if get_option('bmc-layout').contains('static')
+     image_updater_sources += files(
+-- 
+2.43.0
+

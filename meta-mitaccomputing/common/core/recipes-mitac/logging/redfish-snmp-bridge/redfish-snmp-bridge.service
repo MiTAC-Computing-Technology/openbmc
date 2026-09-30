@@ -1,0 +1,27 @@
+[Unit]
+Description=Bridge Warning/Critical Redfish events to SNMP traps
+After=xyz.openbmc_project.Network.SNMP.service
+Wants=xyz.openbmc_project.Network.SNMP.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/redfish-snmp-bridge
+Restart=always
+RestartSec=5
+SyslogIdentifier=redfish-snmp-bridge
+# Read system journal (REDFISH_MESSAGE_ID fields)
+SupplementaryGroups=systemd-journal
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# net-snmp may persist session state under /var/lib/net-snmp
+StateDirectory=net-snmp
+CapabilityBoundingSet=
+# AF_NETLINK: net-snmp interface enumeration on some builds
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

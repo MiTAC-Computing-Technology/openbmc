@@ -54,4 +54,3 @@ $ openssl ec -in keys/dev.pem -pubout -text -noout
 This will display the public key as an uncompressed point in hexadecimal format
 `(04 || x || y)`, which is useful for FDT properties like **ecdsa,x-point** and
 **ecdsa,y-point**.
-

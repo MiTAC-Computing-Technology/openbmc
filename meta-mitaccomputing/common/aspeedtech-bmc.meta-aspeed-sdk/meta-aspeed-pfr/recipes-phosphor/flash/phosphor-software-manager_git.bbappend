@@ -7,10 +7,10 @@ SRC_URI += " \
            "
 
 # Enable flash_bios for PFR firmware update.
-PACKAGECONFIG:append = " verify_signature "
+PACKAGECONFIG:append = " verify_signature flash_bios"
 
 EXTRA_OEMESON:append = " \
-    -Doptional-images='bmc_signed_cap.bin zephyr_signed.bin' \
+    -Doptional-images='bios_signed_cap.bin bmc_signed_cap.bin zephyr_signed.bin' \
 "
 
 do_install:append() {

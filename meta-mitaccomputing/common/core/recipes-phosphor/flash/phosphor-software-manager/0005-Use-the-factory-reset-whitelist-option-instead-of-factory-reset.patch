@@ -1,0 +1,35 @@
+From 427626cd1cad6a334844b53ec989eeb21b4475d9 Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Mon, 15 Jun 2026 07:08:46 +0000
+Subject: [PATCH] Use the factory-reset-whitelist option instead of factory-reset
+
+Set openbmconce=factory-reset-whitelist env in U-Boot.
+Except for the folders or files listed in/run/initramfs/factory_reset_whitelist(e.g. /var/lib/smbios,/var/oob), the init will cleanup rwfs during boot.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ bmc/static/item_updater_helper.cpp | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/bmc/static/item_updater_helper.cpp b/bmc/static/item_updater_helper.cpp
+index 38de972..0ff3edd 100644
+--- a/bmc/static/item_updater_helper.cpp
++++ b/bmc/static/item_updater_helper.cpp
+@@ -26,9 +26,11 @@ void Helper::cleanup()
+ 
+ void Helper::factoryReset()
+ {
+-    // Set openbmconce=factory-reset env in U-Boot.
+-    // The init will cleanup rwfs during boot.
+-    utils::execute("/sbin/fw_setenv", "openbmconce", "factory-reset");
++    // Set openbmconce=factory-reset-whitelist env in U-Boot.
++    // Except for the folders or files listed in
++    // /run/initramfs/factory_reset_whitelist(e.g. /var/lib/smbios,/var/oob),
++    // the init will cleanup rwfs during boot.
++    utils::execute("/sbin/fw_setenv", "openbmconce", "factory-reset-whitelist");
+ }
+ 
+ void Helper::removeVersion(const std::string& /* flashId */)
+-- 
+2.43.0
+

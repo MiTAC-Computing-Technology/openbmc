@@ -1,0 +1,101 @@
+From b85bb99eb7e428a5a486ef338763f5c42c29f13d Mon Sep 17 00:00:00 2001
+From: "justin.kuo" <justin.kuo@mitaccomputing.com>
+Date: Mon, 17 Aug 2026 07:32:02 +0000
+Subject: [PATCH] Fix continuous 'read failed' logs for some psu sensors after
+ BMC boot
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/DeviceMgmt.hpp    | 33 +++++++++++++++++++++++++++++++++
+ src/psu/PSUSensor.cpp | 16 +++++++++++++++-
+ 2 files changed, 48 insertions(+), 1 deletion(-)
+
+diff --git a/src/DeviceMgmt.hpp b/src/DeviceMgmt.hpp
+index f964706..dd4eedc 100644
+--- a/src/DeviceMgmt.hpp
++++ b/src/DeviceMgmt.hpp
+@@ -155,10 +155,17 @@ boost::container::flat_map<std::string,
+                 continue;
+             }
+ #else
++            // clang-format off
+             /* Reuse the I2CDevice held by an existing sensor that is still
+              * active, to avoid obtaining an empty or invalid device from a
+              * deactivated sensor.
++             * Example:
++             * Config Name: PSU_0
++             * Sensor Names: PSU_0_IIN_CURR_A, PSU_0_IOUT_CURR_A, ...
++             * Config Object Path: /xyz/openbmc_project/inventory/system/powersupply/PSU_0/PSU_0
++             * Config Interface: xyz.openbmc_project.Configuration.pmbus
+              */
++            // clang-format on
+             std::shared_ptr<T> findSensor(nullptr);
+             for (const auto& sensor : sensors)
+             {
+@@ -175,6 +182,32 @@ boost::container::flat_map<std::string,
+                 }
+             }
+ 
++            if (findSensor == nullptr)
++            {
++                // clang-format off
++                /* Compare configuration object path and interface name. This
++                 * method is used when the configuration name string cannot be
++                 * found in the sensor name.
++                 * Example:
++                 * Config Name: Baseboard_ADC_Ext
++                 * Sensor Names: Baseboard_CPU2_VDD_VDDIO_RUN_VOLT_V, Baseboard_CPU2_VDD_SOC_RUN_VOLT_V, ... 
++                 * Config Object Path: /xyz/openbmc_project/inventory/system/board/Baseboard_G826Z5/Baseboard_ADC_Ext
++                 * Config Interface: xyz.openbmc_project.Configuration.NCT7904
++                 */
++                // clang-format on
++                for (const auto& sensor : sensors)
++                {
++                    if (sensor.second != nullptr &&
++                        sensor.second->configurationPath == path.str &&
++                        sensor.second->configInterface == name &&
++                        sensor.second->isActive())
++                    {
++                        findSensor = sensor.second;
++                        break;
++                    }
++                }
++            }
++
+             if (findSensor != nullptr)
+             {
+                 devices.emplace(
+diff --git a/src/psu/PSUSensor.cpp b/src/psu/PSUSensor.cpp
+index aa773d3..0f49644 100644
+--- a/src/psu/PSUSensor.cpp
++++ b/src/psu/PSUSensor.cpp
+@@ -128,11 +128,25 @@ bool PSUSensor::isActive()
+ void PSUSensor::activate(const std::string& newPath,
+                          const std::shared_ptr<I2CDevice>& newI2CDevice)
+ {
+-    if (isActive())
++    const bool pathChanged = (path != newPath);
++    const bool i2cChanged = (i2cDevice != newI2CDevice);
++
++    if (!pathChanged && !i2cChanged && isActive())
+     {
+         // Avoid activating an active sensor
+         return;
+     }
++
++    // A transient hwmon re-probe during boot may swap the sysfs path while the
++    // same sensor object remains in the map. Reopen the file descriptor in that
++    // case so the reader does not keep hitting the stale path and spam read
++    // failures.
++    if (isActive() && (pathChanged || i2cChanged))
++    {
++        inputDev.close();
++        waitTimer.cancel();
++    }
++
+     path = newPath;
+     i2cDevice = newI2CDevice;
+     inputDev.open(path, boost::asio::random_access_file::read_only);
+-- 
+2.45.2
+

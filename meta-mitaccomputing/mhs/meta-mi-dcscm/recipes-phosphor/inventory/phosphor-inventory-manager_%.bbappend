@@ -7,6 +7,7 @@ SRC_URI:append = " \
 	file://com.mitac.Hardware.Chassis.Model.E7142/ \
 	file://com.mitac.Hardware.Chassis.Model.R520G6/ \
 	file://com.mitac.Hardware.Chassis.Model.S8051/ \
+    file://com.mitac.Hardware.Chassis.Model.C810Z5/ \
 	"
 
 do_install:append() {

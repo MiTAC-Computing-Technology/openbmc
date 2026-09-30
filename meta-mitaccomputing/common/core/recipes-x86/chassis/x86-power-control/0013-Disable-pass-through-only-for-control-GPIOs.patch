@@ -1,0 +1,107 @@
+From 7f9e3f7b7efed971bf382edc91e82bb0d12e1607 Mon Sep 17 00:00:00 2001
+From: Allen Kang <allen.kang@mitaccomputing.com>
+Date: Tue, 25 Aug 2026 10:30:00 -0400
+Subject: [PATCH] Disable pass-through only when driving control GPIOs
+
+The common power-state wrapper disabled GPIO pass-through before almost
+every event, including passive status notifications and events ignored by
+the current state.  If such an event did not change the host state, no
+restoration path ran, leaving the physical buttons disconnected.
+
+Remove the event-wide wrapper.  Disable pass-through only in the four
+existing operations that actually assert the host power or reset control
+GPIO.  This keeps the existing state machine, GPIO pulse timers, and
+pass-through restoration behavior unchanged while preventing passive
+events such as POST complete from disabling the physical buttons.
+
+Upstream-Status: Inappropriate [MiTAC-specific pass-through control]
+---
+ src/power_control.cpp | 25 +++++++++----------------
+ 1 file changed, 9 insertions(+), 16 deletions(-)
+
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+index 30733b4..d928f54 100644
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -542,21 +542,10 @@ static void powerStateCheckForWarmReset(const Event event);
+
+ static std::function<void(const Event)> getPowerStateHandler(PowerState state)
+ {
+-    auto wrapHandler = [](auto handler) {
+-        return [handler](const Event event) {
+-            if (event != Event::powerButtonPressed &&
+-                event != Event::resetButtonPressed)
+-            {
+-                enablePassThrough(false);
+-            }
+-            handler(event);
+-        };
+-    };
+-
+     switch (state)
+     {
+         case PowerState::on:
+-            return wrapHandler(powerStateOn);
++            return powerStateOn;
+             break;
+         case PowerState::waitForPSPowerOK:
+             return powerStateWaitForPSPowerOK;
+@@ -565,22 +554,22 @@ static std::function<void(const Event)> getPowerStateHandler(PowerState state)
+             return powerStateWaitForSIOPowerGood;
+             break;
+         case PowerState::off:
+-            return wrapHandler(powerStateOff);
++            return powerStateOff;
+             break;
+         case PowerState::transitionToOff:
+             return powerStateTransitionToOff;
+             break;
+         case PowerState::gracefulTransitionToOff:
+-            return wrapHandler(powerStateGracefulTransitionToOff);
++            return powerStateGracefulTransitionToOff;
+             break;
+         case PowerState::cycleOff:
+-            return wrapHandler(powerStateCycleOff);
++            return powerStateCycleOff;
+             break;
+         case PowerState::transitionToCycleOff:
+             return powerStateTransitionToCycleOff;
+             break;
+         case PowerState::gracefulTransitionToCycleOff:
+-            return wrapHandler(powerStateGracefulTransitionToCycleOff);
++            return powerStateGracefulTransitionToCycleOff;
+             break;
+         case PowerState::checkForWarmReset:
+             return powerStateCheckForWarmReset;
+@@ -1462,6 +1451,7 @@ static int assertGPIOForMs(const ConfigData& config, const int durationMs)
+
+ static void powerOn()
+ {
++    enablePassThrough(false);
+     assertGPIOForMs(powerOutConfig, TimerMap["PowerPulseMs"]);
+ }
+ #ifdef CHASSIS_SYSTEM_RESET
+@@ -1538,11 +1528,13 @@ static int slotPowerOff()
+ #endif
+ static void gracefulPowerOff()
+ {
++    enablePassThrough(false);
+     assertGPIOForMs(powerOutConfig, TimerMap["PowerPulseMs"]);
+ }
+
+ static void forcePowerOff()
+ {
++    enablePassThrough(false);
+     if (assertGPIOForMs(powerOutConfig, TimerMap["ForceOffPulseMs"]) < 0)
+     {
+         return;
+@@ -1568,6 +1560,7 @@ static void forcePowerOff()
+
+ static void reset()
+ {
++    enablePassThrough(false);
+     assertGPIOForMs(resetOutConfig, TimerMap["ResetPulseMs"]);
+ }
+
+-- 
+2.45.2

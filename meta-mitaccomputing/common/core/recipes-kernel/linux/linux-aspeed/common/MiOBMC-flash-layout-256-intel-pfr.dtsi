@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2025 MiTAC Computing Technology Corp.
+ *
+ * AST2700-A2 / mi-dcscm-2700: 128 MiB active BMC image on a 256 MiB Intel-PFR map.
+ * Active offsets match machine conf flash-131072 (rofs@13440, rwfs@76800) and
+ * PFR pages PFM@0x06000000 / RC@0x06220000. Keep pfr_manifest_midcscm_2700.json
+ * and aspeed-pfr-tool-ast2700.conf in lockstep with this table.
  */
 
 
@@ -17,11 +22,11 @@ partitions {
         label = "u-boot-env";
     };
     kernel@420000 {
-        reg = <0x420000 0xa00000>; // 10240KB
+        reg = <0x420000 0x900000>; // 9216KB (A2; was 10240KB @ rofs 14464)
         label = "kernel";
     };
-    rofs@e20000 {
-        reg = <0xe20000 0x3ce0000>; // 62336KB
+    rofs@d20000 {
+        reg = <0xd20000 0x3de0000>; // 63360KB
         label = "rofs";
     };
     rwfs@4b00000 {
@@ -33,7 +38,7 @@ partitions {
         label = "pfm";
     };
     reserved-1@6020000 {
-        reg = <0x6020000 0x200000>; // 128KB
+        reg = <0x6020000 0x200000>; // 2048KB
         label = "reserved-1";
     };
     rc-image@6220000 {
@@ -61,7 +66,7 @@ partitions {
         label = "afm-rc";
     };
     reserved-2@fd80000 {
-        reg = <0xfd80000 0x280000>; //
+        reg = <0xfd80000 0x280000>; // 2560KB
         label = "reserved-2";
     };
 };

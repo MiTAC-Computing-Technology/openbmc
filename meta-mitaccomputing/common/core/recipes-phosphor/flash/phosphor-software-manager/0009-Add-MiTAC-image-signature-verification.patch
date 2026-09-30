@@ -1,0 +1,486 @@
+From 9bdaeb48527c08df8026d32143325e207755f199 Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Wed, 5 Aug 2026 22:53:15 -0400
+Subject: [PATCH] Add MiTAC image signature verification
+
+Verify the firmware public key against a trusted activation key, validate
+the image signing chain, and verify each firmware artifact signature.
+Support RSA and ECDSA keys stored as X.509 certificates or PEM public
+keys.
+
+Add the verify-mitac-signature Meson option and perform verification for
+both BMC and Host firmware activation.
+
+Test:
+Update keys for the mitac-signing-keys repository.
+Built phosphor-software-manager with verify-mitac-signature enabled.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ bmc/activation.cpp         |  40 ++++-
+ bmc/meson.build            |   8 +
+ bmc/mitac_image_verify.cpp | 317 +++++++++++++++++++++++++++++++++++++
+ bmc/mitac_image_verify.hpp |  12 ++
+ meson.options              |   7 +
+ 5 files changed, 379 insertions(+), 5 deletions(-)
+ create mode 100644 bmc/mitac_image_verify.cpp
+ create mode 100644 bmc/mitac_image_verify.hpp
+
+diff --git a/bmc/activation.cpp b/bmc/activation.cpp
+index 28729f84..1dfdabec 100644
+--- a/bmc/activation.cpp
++++ b/bmc/activation.cpp
+@@ -20,6 +20,10 @@
+ #include "image_verify.hpp"
+ #endif
+ 
++#ifdef WANT_MITAC_SIGNATURE_VERIFY
++#include "mitac_image_verify.hpp"
++#endif
++
+ namespace phosphor
+ {
+ namespace software
+@@ -34,7 +38,7 @@ using namespace phosphor::logging;
+ using InternalFailure =
+     sdbusplus::error::xyz::openbmc_project::common::InternalFailure;
+ 
+-#ifdef WANT_SIGNATURE_VERIFY
++#if defined(WANT_SIGNATURE_VERIFY) || defined(WANT_MITAC_SIGNATURE_VERIFY)
+ namespace control = sdbusplus::server::xyz::openbmc_project::control;
+ #endif
+ 
+@@ -156,18 +160,45 @@ auto Activation::activation(Activations value) -> Activations
+ 
+     if (value == softwareServer::Activation::Activations::Activating)
+     {
++#if defined(HOST_BIOS_UPGRADE) || defined(WANT_MITAC_SIGNATURE_VERIFY)
++        auto purpose = parent.versions.find(versionId)->second->purpose();
++#endif
++#if defined(WANT_SIGNATURE_VERIFY) || defined(WANT_MITAC_SIGNATURE_VERIFY)
++        const std::filesystem::path uploadDir(IMG_UPLOAD_DIR);
++#endif
++
++#ifdef WANT_MITAC_SIGNATURE_VERIFY
++        const bool isMitacImage =
++            purpose == VersionPurpose::Host || purpose == VersionPurpose::BMC;
++        const auto mitacKeyDir =
++            std::filesystem::path{SIGNED_IMAGE_CONF_PATH} / "MiTAC";
++
++        if (isMitacImage && !mitac_image_verify::verifySignature(
++                                uploadDir / versionId, mitacKeyDir))
++        {
++            using InvalidSignatureErr = sdbusplus::error::xyz::openbmc_project::
++                software::version::InvalidSignature;
++            report<InvalidSignatureErr>();
++            redfishLog("FirmwareUpdateFailed", "Invalid signature");
++            // Stop the activation process, if fieldMode is enabled.
++            if (parent.control::FieldMode::fieldModeEnabled())
++            {
++                return setFailedAndCleanupUpload();
++            }
++        }
++#endif
++
+ #ifdef WANT_SIGNATURE_VERIFY
+-        fs::path uploadDir(IMG_UPLOAD_DIR);
+         if (!verifySignature(uploadDir / versionId, SIGNED_IMAGE_CONF_PATH))
+         {
+             using InvalidSignatureErr = sdbusplus::error::xyz::openbmc_project::
+                 software::version::InvalidSignature;
+             report<InvalidSignatureErr>();
++            redfishLog("FirmwareUpdateFailed", "Invalid signature");
+             // Stop the activation process, if fieldMode is enabled.
+             if (parent.control::FieldMode::fieldModeEnabled())
+             {
+-                return softwareServer::Activation::activation(
+-                    softwareServer::Activation::Activations::Failed);
++                return setFailedAndCleanupUpload();
+             }
+         }
+ #endif
+@@ -200,7 +231,6 @@ auto Activation::activation(Activations value) -> Activations
+         }
+ 
+ #ifdef HOST_BIOS_UPGRADE
+-        auto purpose = parent.versions.find(versionId)->second->purpose();
+         if (purpose == VersionPurpose::Host)
+         {
+             // Enable systemd signals
+diff --git a/bmc/meson.build b/bmc/meson.build
+index c709da94..ae11cd32 100644
+--- a/bmc/meson.build
++++ b/bmc/meson.build
+@@ -182,6 +182,10 @@ if (get_option('verify-signature').allowed())
+     , 'utils.cpp')
+ endif
+ 
++if get_option('verify-mitac-signature').enabled()
++    image_updater_sources += files('mitac_image_verify.cpp')
++endif
++
+ executable(
+     'phosphor-download-manager',
+     'download_manager.cpp',
+diff --git a/bmc/mitac_image_verify.cpp b/bmc/mitac_image_verify.cpp
+new file mode 100644
+index 00000000..152450f5
+--- /dev/null
++++ b/bmc/mitac_image_verify.cpp
+@@ -0,0 +1,317 @@
++#include "mitac_image_verify.hpp"
++
++#include <openssl/evp.h>
++#include <openssl/pem.h>
++#include <openssl/x509.h>
++
++#include <phosphor-logging/lg2.hpp>
++
++#include <array>
++#include <filesystem>
++#include <fstream>
++#include <iomanip>
++#include <iterator>
++#include <memory>
++#include <sstream>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++namespace fs = std::filesystem;
++
++namespace mitac_image_verify
++{
++namespace
++{
++
++using Bytes = std::vector<unsigned char>;
++using Digest = std::array<unsigned char, 32>;
++using PKeyPtr = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
++using BioPtr = std::unique_ptr<BIO, decltype(&BIO_free)>;
++using X509Ptr = std::unique_ptr<X509, decltype(&X509_free)>;
++using MdCtxPtr = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
++
++Bytes readFile(const fs::path& path)
++{
++    std::ifstream stream(path, std::ios::binary);
++    if (!stream)
++    {
++        throw std::runtime_error("Unable to open " + path.string());
++    }
++
++    return Bytes(std::istreambuf_iterator<char>(stream),
++                 std::istreambuf_iterator<char>());
++}
++
++Digest sha256(const Bytes& content)
++{
++    Digest digest{};
++    unsigned int digestLength = 0;
++    MdCtxPtr context(EVP_MD_CTX_new(), EVP_MD_CTX_free);
++    if (!context ||
++        EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1 ||
++        EVP_DigestUpdate(context.get(), content.data(), content.size()) != 1 ||
++        EVP_DigestFinal_ex(context.get(), digest.data(), &digestLength) != 1 ||
++        digestLength != digest.size())
++    {
++        throw std::runtime_error("SHA-256 calculation failed");
++    }
++    return digest;
++}
++
++template <typename Container>
++std::string toHex(const Container& content)
++{
++    std::ostringstream stream;
++    stream << std::hex << std::setfill('0');
++    for (const unsigned char byte : content)
++    {
++        stream << std::setw(2) << static_cast<unsigned int>(byte);
++    }
++    return stream.str();
++}
++
++PKeyPtr loadTrustedKeyOrCert(const Bytes& fileBytes)
++{
++    const std::string text(fileBytes.begin(), fileBytes.end());
++    BioPtr bio(
++        BIO_new_mem_buf(fileBytes.data(), static_cast<int>(fileBytes.size())),
++        BIO_free);
++    if (!bio)
++    {
++        return PKeyPtr(nullptr, EVP_PKEY_free);
++    }
++
++    if (text.find("-----BEGIN CERTIFICATE-----") != std::string::npos)
++    {
++        X509Ptr certificate(
++            PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr), X509_free);
++        if (!certificate)
++        {
++            return PKeyPtr(nullptr, EVP_PKEY_free);
++        }
++        lg2::debug("Loaded public key from X509 certificate");
++        return PKeyPtr(X509_get_pubkey(certificate.get()), EVP_PKEY_free);
++    }
++
++    if (text.find("-----BEGIN PUBLIC KEY-----") != std::string::npos)
++    {
++        EVP_PKEY* publicKey =
++            PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr);
++        if (publicKey != nullptr)
++        {
++            lg2::debug("Loaded public key from PEM");
++        }
++        return PKeyPtr(publicKey, EVP_PKEY_free);
++    }
++
++    return PKeyPtr(nullptr, EVP_PKEY_free);
++}
++
++PKeyPtr getActivationKey(const fs::path& activationDir,
++                         const std::string& fileHash)
++{
++    const fs::path certificatePath = activationDir / (fileHash + ".crt");
++    const fs::path publicKeyPath = activationDir / (fileHash + ".pem");
++
++    if (fs::is_regular_file(certificatePath))
++    {
++        lg2::debug("Using activation certificate {PATH}", "PATH",
++                   certificatePath.string());
++        return loadTrustedKeyOrCert(readFile(certificatePath));
++    }
++    if (fs::is_regular_file(publicKeyPath))
++    {
++        lg2::debug("Using activation public key {PATH}", "PATH",
++                   publicKeyPath.string());
++        return loadTrustedKeyOrCert(readFile(publicKeyPath));
++    }
++
++    lg2::error("No activation key found for digest {DIGEST}", "DIGEST",
++               fileHash);
++    return PKeyPtr(nullptr, EVP_PKEY_free);
++}
++
++bool isSupportedKey(EVP_PKEY* publicKey)
++{
++    const int keyType = EVP_PKEY_base_id(publicKey);
++    return keyType == EVP_PKEY_RSA || keyType == EVP_PKEY_EC;
++}
++
++bool verifyDataSignature(EVP_PKEY* publicKey, const Bytes& signature,
++                         const Bytes& content)
++{
++    MdCtxPtr context(EVP_MD_CTX_new(), EVP_MD_CTX_free);
++    if (!context ||
++        EVP_DigestVerifyInit(context.get(), nullptr, EVP_sha256(), nullptr,
++                             publicKey) != 1 ||
++        EVP_DigestVerifyUpdate(context.get(), content.data(), content.size()) !=
++            1)
++    {
++        return false;
++    }
++    return EVP_DigestVerifyFinal(context.get(), signature.data(),
++                                 signature.size()) == 1;
++}
++
++std::vector<fs::path> findSignatureFiles(const fs::path& folderPath)
++{
++    std::vector<fs::path> files;
++    for (const fs::directory_entry& entry : fs::directory_iterator(folderPath))
++    {
++        const fs::path& path = entry.path();
++        if (entry.is_regular_file() && path.extension() == ".sig" &&
++            path.filename() != "image-full.sig")
++        {
++            files.push_back(path);
++        }
++    }
++    return files;
++}
++
++bool calculateImageFullDigest(const fs::path& folderPath, Digest& result)
++{
++    result.fill(0);
++    const std::vector<fs::path> signatureFiles = findSignatureFiles(folderPath);
++    if (signatureFiles.empty())
++    {
++        lg2::error("No signature tracking files found in {PATH}", "PATH",
++                   folderPath.string());
++        return false;
++    }
++
++    for (const fs::path& signaturePath : signatureFiles)
++    {
++        const Digest fileDigest = sha256(readFile(signaturePath));
++        for (std::size_t index = 0; index < result.size(); ++index)
++        {
++            result[index] ^= fileDigest[index];
++        }
++    }
++    return true;
++}
++
++bool verifySigningChain(const fs::path& targetDir,
++                        const fs::path& activationDir)
++{
++    const Bytes publicKeyContent = readFile(targetDir / "publickey");
++    PKeyPtr activationKey =
++        getActivationKey(activationDir, toHex(sha256(publicKeyContent)));
++    if (!activationKey)
++    {
++        return false;
++    }
++    if (!isSupportedKey(activationKey.get()))
++    {
++        lg2::error("Activation key is not an RSA or ECDSA key");
++        return false;
++    }
++
++    const Bytes masterSignature = readFile(targetDir / "image-full.sig");
++    const Bytes promptedDigest = readFile(targetDir / "image-full.dgst");
++    if (!verifyDataSignature(activationKey.get(), masterSignature,
++                             promptedDigest))
++    {
++        lg2::error("image-full.sig verification failed");
++        return false;
++    }
++
++    Digest measuredDigest{};
++    if (!calculateImageFullDigest(targetDir, measuredDigest))
++    {
++        return false;
++    }
++
++    const std::string promptedHex = toHex(promptedDigest);
++    const std::string measuredHex = toHex(measuredDigest);
++    if (promptedHex != measuredHex)
++    {
++        lg2::error(
++            "Image digest mismatch: expected {EXPECTED}, measured {MEASURED}",
++            "EXPECTED", promptedHex, "MEASURED", measuredHex);
++        return false;
++    }
++
++    lg2::info("Image signing chain verification succeeded");
++    return true;
++}
++
++bool verifyAllArtifacts(const fs::path& folderPath)
++{
++    PKeyPtr publicKey =
++        loadTrustedKeyOrCert(readFile(folderPath / "publickey"));
++    if (!publicKey || !isSupportedKey(publicKey.get()))
++    {
++        lg2::error("Firmware public key is not an RSA or ECDSA key");
++        return false;
++    }
++
++    const std::vector<fs::path> signatureFiles = findSignatureFiles(folderPath);
++    if (signatureFiles.empty())
++    {
++        lg2::error("No signature tracking files found in {PATH}", "PATH",
++                   folderPath.string());
++        return false;
++    }
++
++    for (const fs::path& signaturePath : signatureFiles)
++    {
++        const fs::path contentPath =
++            signaturePath.parent_path() / signaturePath.stem();
++        if (!verifyDataSignature(publicKey.get(), readFile(signaturePath),
++                                 readFile(contentPath)))
++        {
++            lg2::error("Artifact signature verification failed for {PATH}",
++                       "PATH", contentPath.string());
++            return false;
++        }
++        lg2::debug("Artifact signature verified for {PATH}", "PATH",
++                   contentPath.string());
++    }
++    return true;
++}
++
++} // namespace
++
++bool verifySignature(const fs::path& workspace, const fs::path& activationStore)
++{
++    try
++    {
++        if (!fs::is_directory(workspace))
++        {
++            lg2::error("Firmware bundle directory does not exist: {PATH}",
++                       "PATH", workspace.string());
++            return false;
++        }
++
++        if (!fs::is_directory(activationStore))
++        {
++            lg2::error("Activation directory does not exist: {PATH}", "PATH",
++                       activationStore.string());
++            return false;
++        }
++
++        if (!verifySigningChain(workspace, activationStore))
++        {
++            lg2::error("Image signing chain verification failed");
++            return false;
++        }
++
++        if (!verifyAllArtifacts(workspace))
++        {
++            lg2::error("One or more firmware artifacts failed verification");
++            return false;
++        }
++
++        lg2::info("MiTAC image signature verification succeeded");
++        return true;
++    }
++    catch (const std::exception& error)
++    {
++        lg2::error("MiTAC image signature verification failed: {ERROR}",
++                   "ERROR", error.what());
++        return false;
++    }
++}
++
++} // namespace mitac_image_verify
+diff --git a/bmc/mitac_image_verify.hpp b/bmc/mitac_image_verify.hpp
+new file mode 100644
+index 00000000..2348d99a
+--- /dev/null
++++ b/bmc/mitac_image_verify.hpp
+@@ -0,0 +1,12 @@
++#pragma once
++
++#include <filesystem>
++
++namespace mitac_image_verify
++{
++
++[[nodiscard]] bool verifySignature(
++    const std::filesystem::path& workspace,
++    const std::filesystem::path& activationStore);
++
++} // namespace mitac_image_verify
+diff --git a/meson.options b/meson.options
+index 43503769..a05bff9e 100644
+--- a/meson.options
++++ b/meson.options
+@@ -42,6 +42,13 @@ option(
+     description: 'Firmware update via USB.',
+ )
+ 
++option(
++    'verify-mitac-signature',
++    type: 'feature',
++    value: 'disabled',
++    description: 'Enable MiTAC image signature validation.',
++)
++
+ option(
+     'software-update-dbus-interface',
+     type: 'feature',
+-- 
+2.34.1
+

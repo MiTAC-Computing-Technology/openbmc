@@ -6,12 +6,10 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=b234ee4d69f5fce4486a80fdaf4a4263"
 INSANE_SKIP:${PN} = "ldflags"
 
 SRC_URI = "git://github.com/eddiejames/xdma-test.git;protocol=https;branch=master"
+S = "${UNPACKDIR}/git"
 
 PV = "1.0+git"
-SRCREV = "caf176d53488433e2685ec082ac3d16bed9c1dc2"
-
-S = "${WORKDIR}/git"
-B = "${S}"
+SRCREV = "caab5a2f47364e95e6da96526a6af6787dc2198c"
 
 do_compile() {
     oe_runmake

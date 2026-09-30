@@ -1,0 +1,73 @@
+From 77124c35e6ecc0c87bc688b10704b22e6ad04878 Mon Sep 17 00:00:00 2001
+From: "fredy.chen" <fredy.chen@mitaccomputing.com>
+Date: Tue, 4 Aug 2026 21:33:26 -0400
+Subject: [PATCH] cpld cpu presence driver
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ drivers/hwmon/mic-cpld-4826.c | 7 +++++++
+ drivers/hwmon/mic-cpld-4826.h | 9 ++++++++-
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/hwmon/mic-cpld-4826.c b/drivers/hwmon/mic-cpld-4826.c
+index 5ca4352e2b05..5953addc8e74 100644
+--- a/drivers/hwmon/mic-cpld-4826.c
++++ b/drivers/hwmon/mic-cpld-4826.c
+@@ -429,6 +429,7 @@ static const struct i2c_device_id mic_cpld_4826_id[] = {
+ 	{ "cpld-4826-pcie-bay", CPLD_PCIE_BAY },
+ 	{ "cpld-4826-hsbp", CPLD_HSBP },
+ 	{ "cpld-4826-sw", CPLD_SW },
++	{ "cpld-4826-cpu-presence", CPLD_CPU_PRESENCE },
+ 	{}
+ };
+ 
+@@ -439,6 +440,8 @@ static const struct of_device_id cpld_of_match[] = {
+ 	  .data = (void *)CPLD_PCIE_BAY },
+ 	{ .compatible = "mic,cpld-4826-hsbp", .data = (void *)CPLD_HSBP },
+ 	{ .compatible = "mic,cpld-4826-sw", .data = (void *)CPLD_SW },
++	{ .compatible = "mic,cpld-4826-cpu-presence",
++	  .data = (void *)CPLD_CPU_PRESENCE },
+ 	{}
+ };
+ 
+@@ -474,6 +477,10 @@ static int init_mic_cpld_4826_data(struct mic_cpld_4826_data *data,
+ 	case CPLD_PCIE_BAY:
+ 		data->enable_hwmon = true;
+ 		break;
++	case CPLD_CPU_PRESENCE:
++		data->gpio_cfg = (struct GPIO_DEF_ENTRY *)gpio_cfg_cpu_presence;
++		data->gpio_port_num = ARRAY_SIZE(gpio_cfg_cpu_presence);
++		break;
+ 	default:
+ 		// Only support report of version information.
+ 		break;
+diff --git a/drivers/hwmon/mic-cpld-4826.h b/drivers/hwmon/mic-cpld-4826.h
+index 052fa44d38e4..4dec416b1b40 100644
+--- a/drivers/hwmon/mic-cpld-4826.h
++++ b/drivers/hwmon/mic-cpld-4826.h
+@@ -17,7 +17,8 @@ enum chips {
+ 	CPLD_UBB,
+ 	CPLD_PCIE_BAY,
+ 	CPLD_HSBP,
+-	CPLD_SW
++	CPLD_SW,
++	CPLD_CPU_PRESENCE
+ };
+ 
+ struct GPIO_DEF_ENTRY {
+@@ -51,6 +52,12 @@ const struct GPIO_DEF_ENTRY gpio_cfg_hsbp[] = {
+ 	{ 0x0f, 0x07, 0x00 },
+ };
+ 
++// For G826Z5 CPU presence CPLD. Bit 7 is active-low presence status.
++const struct GPIO_DEF_ENTRY gpio_cfg_cpu_presence[] = {
++	{ 0x20, 0x00, 0x80 }, // CPU_0_PRESENCE
++	{ 0x21, 0x00, 0x80 }, // CPU_1_PRESENCE
++};
++
+ struct cpld_pwm_port {
+ 	struct mic_cpld_4826_data *priv;
+ 	struct thermal_cooling_device *cdev;
+-- 
+2.34.1
+

@@ -1,5 +1,9 @@
 require conf/machine/include/mitac-linux.inc
 require conf/machine/include/miobmc-flash-size.inc
+require conf/machine/include/mitac-sign.inc
+
+# NDA bmcweb meson.build requires Boost >= 1.88.0 (poky ships 1.87.0).
+PREFERRED_VERSION_boost = "1.88.0"
 
 ######################
 # Feature Management #
@@ -22,7 +26,7 @@ DISTRO_FEATURES:append = " ldap"
 ####################
 
 # OBMC Phosphor
-IMAGE_INSTALL:append = "phosphor-led-sysfs elfutils phosphor-inventory-manager biosconfig-manager "
+IMAGE_INSTALL:append = "phosphor-led-sysfs elfutils phosphor-inventory-manager biosconfig-manager phosphor-dbus-monitor "
 # Mitac Common
 IMAGE_INSTALL:append = "mitac-common-functions plat-svc id-button early-vga mitac-dcm-telemetry infineon-vr-util "
 IMAGE_INSTALL:append = "mitac-mctp-pcie-vdm-core mitac-mctp-pcie-vdm-drivers "

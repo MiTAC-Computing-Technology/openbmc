@@ -1,0 +1,428 @@
+[
+  {
+    "Exposes": [
+      {
+        "ConnectsToType": "Fan Upstream Port",
+        "Name": "Fan 1 Downstream Port",
+        "Type": "DownstreamPort",
+        "FanPort": true
+      },
+      {
+        "Name": "Fan_1_SPEED_RPM",
+        "MaxValue": 20000,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Fan_1A_SPEED_RPM",
+          "FCB_Fan_1B_SPEED_RPM"
+        ],
+        "Thresholds": [
+          {
+            "Direction": "less than",
+            "Name": "lower critical",
+            "Severity": 1,
+            "Value": 1080
+          },
+          {
+            "Direction": "less than",
+            "Name": "lower non critical",
+            "Severity": 0,
+            "Value": 1260
+          }
+        ],
+        "Type": "Minimum",
+        "Units": "RPMS"
+      },
+      {
+        "Name": "Fan_1_PWM_PCT",
+        "MaxValue": 100,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Pwm_1_PWM_PCT"
+        ],
+        "Type": "Maximum",
+        "Units": "Percent"
+      }
+    ],
+    "Name": "Fan 1",
+    "Probe": [
+      "FOUND('Chassis R520G6')"
+    ],
+    "Type": "Fan",
+    "xyz.openbmc_project.Inventory.Decorator.Asset": {
+      "Manufacturer": "Mitac",
+      "Model": "FAN6056",
+      "PartNumber": "TODO"
+    },
+    "xyz.openbmc_project.Inventory.Item": {
+      "Present": true,
+      "PresencePinName": "FAN1_PRSNT_N",
+      "PresencePolarity": "Low"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan": {
+      "HotPluggable": true,
+      "Replaceable": true,
+      "RatedSpeedRPM": 20000,
+      "RatedSecondarySpeedRPM": 20000,
+      "SpeedPercent": "$FCB_Pwm_1_PWM_PCT"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan.Oem": {
+      "SpeedRPM": "$FCB_Fan_1A_SPEED_RPM",
+      "SecondarySpeedRPM": "$FCB_Fan_1B_SPEED_RPM"
+    }
+  },
+  {
+    "Exposes": [
+      {
+        "ConnectsToType": "Fan Upstream Port",
+        "Name": "Fan 2 Downstream Port",
+        "Type": "DownstreamPort",
+        "FanPort": true
+      },
+      {
+        "Name": "Fan_2_SPEED_RPM",
+        "MaxValue": 20000,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Fan_2A_SPEED_RPM",
+          "FCB_Fan_2B_SPEED_RPM"
+        ],
+        "Thresholds": [
+          {
+            "Direction": "less than",
+            "Name": "lower critical",
+            "Severity": 1,
+            "Value": 1080
+          },
+          {
+            "Direction": "less than",
+            "Name": "lower non critical",
+            "Severity": 0,
+            "Value": 1260
+          }
+        ],
+        "Type": "Minimum",
+        "Units": "RPMS"
+      },
+      {
+        "Name": "Fan_2_PWM_PCT",
+        "MaxValue": 100,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Pwm_2_PWM_PCT"
+        ],
+        "Type": "Maximum",
+        "Units": "Percent"
+      }
+    ],
+    "Name": "Fan 2",
+    "Probe": [
+      "FOUND('Chassis R520G6')"
+    ],
+    "Type": "Fan",
+    "xyz.openbmc_project.Inventory.Decorator.Asset": {
+      "Manufacturer": "Mitac",
+      "Model": "FAN6056",
+      "PartNumber": "TODO"
+    },
+    "xyz.openbmc_project.Inventory.Item": {
+      "Present": true,
+      "PresencePinName": "FAN2_PRSNT_N",
+      "PresencePolarity": "Low"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan": {
+      "HotPluggable": true,
+      "Replaceable": true,
+      "RatedSpeedRPM": 20000,
+      "RatedSecondarySpeedRPM": 20000,
+      "SpeedPercent": "$FCB_Pwm_2_PWM_PCT"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan.Oem": {
+      "SpeedRPM": "$FCB_Fan_2A_SPEED_RPM",
+      "SecondarySpeedRPM": "$FCB_Fan_2B_SPEED_RPM"
+    }
+  },
+  {
+    "Exposes": [
+      {
+        "ConnectsToType": "Fan Upstream Port",
+        "Name": "Fan 3 Downstream Port",
+        "Type": "DownstreamPort",
+        "FanPort": true
+      },
+      {
+        "Name": "Fan_3_SPEED_RPM",
+        "MaxValue": 20000,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Fan_3A_SPEED_RPM",
+          "FCB_Fan_3B_SPEED_RPM"
+        ],
+        "Thresholds": [
+          {
+            "Direction": "less than",
+            "Name": "lower critical",
+            "Severity": 1,
+            "Value": 1080
+          },
+          {
+            "Direction": "less than",
+            "Name": "lower non critical",
+            "Severity": 0,
+            "Value": 1260
+          }
+        ],
+        "Type": "Minimum",
+        "Units": "RPMS"
+      },
+      {
+        "Name": "Fan_3_PWM_PCT",
+        "MaxValue": 100,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Pwm_3_PWM_PCT"
+        ],
+        "Type": "Maximum",
+        "Units": "Percent"
+      }
+    ],
+    "Name": "Fan 3",
+    "Probe": [
+      "FOUND('Chassis R520G6')"
+    ],
+    "Type": "Fan",
+    "xyz.openbmc_project.Inventory.Decorator.Asset": {
+      "Manufacturer": "Mitac",
+      "Model": "FAN6056",
+      "PartNumber": "TODO"
+    },
+    "xyz.openbmc_project.Inventory.Item": {
+      "Present": true,
+      "PresencePinName": "FAN3_PRSNT_N",
+      "PresencePolarity": "Low"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan": {
+      "HotPluggable": true,
+      "Replaceable": true,
+      "RatedSpeedRPM": 20000,
+      "RatedSecondarySpeedRPM": 20000,
+      "SpeedPercent": "$FCB_Pwm_3_PWM_PCT"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan.Oem": {
+      "SpeedRPM": "$FCB_Fan_3A_SPEED_RPM",
+      "SecondarySpeedRPM": "$FCB_Fan_3B_SPEED_RPM"
+    }
+  },
+  {
+    "Exposes": [
+      {
+        "ConnectsToType": "Fan Upstream Port",
+        "Name": "Fan 4 Downstream Port",
+        "Type": "DownstreamPort",
+        "FanPort": true
+      },
+      {
+        "Name": "Fan_4_SPEED_RPM",
+        "MaxValue": 20000,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Fan_4A_SPEED_RPM",
+          "FCB_Fan_4B_SPEED_RPM"
+        ],
+        "Thresholds": [
+          {
+            "Direction": "less than",
+            "Name": "lower critical",
+            "Severity": 1,
+            "Value": 1080
+          },
+          {
+            "Direction": "less than",
+            "Name": "lower non critical",
+            "Severity": 0,
+            "Value": 1260
+          }
+        ],
+        "Type": "Minimum",
+        "Units": "RPMS"
+      },
+      {
+        "Name": "Fan_4_PWM_PCT",
+        "MaxValue": 100,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Pwm_4_PWM_PCT"
+        ],
+        "Type": "Maximum",
+        "Units": "Percent"
+      }
+    ],
+    "Name": "Fan 4",
+    "Probe": [
+      "FOUND('Chassis R520G6')"
+    ],
+    "Type": "Fan",
+    "xyz.openbmc_project.Inventory.Decorator.Asset": {
+      "Manufacturer": "Mitac",
+      "Model": "FAN6056",
+      "PartNumber": "TODO"
+    },
+    "xyz.openbmc_project.Inventory.Item": {
+      "Present": true,
+      "PresencePinName": "FAN4_PRSNT_N",
+      "PresencePolarity": "Low"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan": {
+      "HotPluggable": true,
+      "Replaceable": true,
+      "RatedSpeedRPM": 20000,
+      "RatedSecondarySpeedRPM": 20000,
+      "SpeedPercent": "$FCB_Pwm_4_PWM_PCT"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan.Oem": {
+      "SpeedRPM": "$FCB_Fan_4A_SPEED_RPM",
+      "SecondarySpeedRPM": "$FCB_Fan_4B_SPEED_RPM"
+    }
+  },
+  {
+    "Exposes": [
+      {
+        "ConnectsToType": "Fan Upstream Port",
+        "Name": "Fan 5 Downstream Port",
+        "Type": "DownstreamPort",
+        "FanPort": true
+      },
+      {
+        "Name": "Fan_5_SPEED_RPM",
+        "MaxValue": 20000,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Fan_5A_SPEED_RPM",
+          "FCB_Fan_5B_SPEED_RPM"
+        ],
+        "Thresholds": [
+          {
+            "Direction": "less than",
+            "Name": "lower critical",
+            "Severity": 1,
+            "Value": 1080
+          },
+          {
+            "Direction": "less than",
+            "Name": "lower non critical",
+            "Severity": 0,
+            "Value": 1260
+          }
+        ],
+        "Type": "Minimum",
+        "Units": "RPMS"
+      },
+      {
+        "Name": "Fan_5_PWM_PCT",
+        "MaxValue": 100,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Pwm_5_PWM_PCT"
+        ],
+        "Type": "Maximum",
+        "Units": "Percent"
+      }
+    ],
+    "Name": "Fan 5",
+    "Probe": [
+      "FOUND('Chassis R520G6')"
+    ],
+    "Type": "Fan",
+    "xyz.openbmc_project.Inventory.Decorator.Asset": {
+      "Manufacturer": "Mitac",
+      "Model": "FAN6056",
+      "PartNumber": "TODO"
+    },
+    "xyz.openbmc_project.Inventory.Item": {
+      "Present": true,
+      "PresencePinName": "FAN5_PRSNT_N",
+      "PresencePolarity": "Low"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan": {
+      "HotPluggable": true,
+      "Replaceable": true,
+      "RatedSpeedRPM": 20000,
+      "RatedSecondarySpeedRPM": 20000,
+      "SpeedPercent": "$FCB_Pwm_5_PWM_PCT"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan.Oem": {
+      "SpeedRPM": "$FCB_Fan_5A_SPEED_RPM",
+      "SecondarySpeedRPM": "$FCB_Fan_5B_SPEED_RPM"
+    }
+  },
+  {
+    "Exposes": [
+      {
+        "ConnectsToType": "Fan Upstream Port",
+        "Name": "Fan 6 Downstream Port",
+        "Type": "DownstreamPort",
+        "FanPort": true
+      },
+      {
+        "Name": "Fan_6_SPEED_RPM",
+        "MaxValue": 20000,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Fan_6A_SPEED_RPM",
+          "FCB_Fan_6B_SPEED_RPM"
+        ],
+        "Thresholds": [
+          {
+            "Direction": "less than",
+            "Name": "lower critical",
+            "Severity": 1,
+            "Value": 1080
+          },
+          {
+            "Direction": "less than",
+            "Name": "lower non critical",
+            "Severity": 0,
+            "Value": 1260
+          }
+        ],
+        "Type": "Minimum",
+        "Units": "RPMS"
+      },
+      {
+        "Name": "Fan_6_PWM_PCT",
+        "MaxValue": 100,
+        "MinValue": 0,
+        "Sensors": [
+          "FCB_Pwm_6_PWM_PCT"
+        ],
+        "Type": "Maximum",
+        "Units": "Percent"
+      }
+    ],
+    "Name": "Fan 6",
+    "Probe": [
+      "FOUND('Chassis R520G6')"
+    ],
+    "Type": "Fan",
+    "xyz.openbmc_project.Inventory.Decorator.Asset": {
+      "Manufacturer": "Mitac",
+      "Model": "FAN6056",
+      "PartNumber": "TODO"
+    },
+    "xyz.openbmc_project.Inventory.Item": {
+      "Present": true,
+      "PresencePinName": "FAN6_PRSNT_N",
+      "PresencePolarity": "Low"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan": {
+      "HotPluggable": true,
+      "Replaceable": true,
+      "RatedSpeedRPM": 20000,
+      "RatedSecondarySpeedRPM": 20000,
+      "SpeedPercent": "$FCB_Pwm_6_PWM_PCT"
+    },
+    "xyz.openbmc_project.Inventory.Item.Fan.Oem": {
+      "SpeedRPM": "$FCB_Fan_6A_SPEED_RPM",
+      "SecondarySpeedRPM": "$FCB_Fan_6B_SPEED_RPM"
+    }
+  }
+]

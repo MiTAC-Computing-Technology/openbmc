@@ -1,0 +1,432 @@
+From ab9660f1fee90ade0f2273d4cad49f78be8044cb Mon Sep 17 00:00:00 2001
+From: "justin.kuo" <justin.kuo@mitaccomputing.com>
+Date: Thu, 30 Jul 2026 01:39:41 +0000
+Subject: [PATCH] Do not recreate the sensors when the ADC and PSU sensor
+ thresholds change.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/adc/ADCSensor.cpp     | 81 ++++++++++++++++++++++++++++++++-
+ src/adc/ADCSensor.hpp     |  4 ++
+ src/adc/ADCSensorMain.cpp | 94 +++++++++++++++++++++++++++++----------
+ src/psu/PSUSensor.cpp     | 82 +++++++++++++++++++++++++++++++++-
+ src/psu/PSUSensor.hpp     |  7 ++-
+ src/psu/PSUSensorMain.cpp | 45 +++++++++++++++++--
+ 6 files changed, 282 insertions(+), 31 deletions(-)
+
+diff --git a/src/adc/ADCSensor.cpp b/src/adc/ADCSensor.cpp
+index cbf7132..452ce27 100644
+--- a/src/adc/ADCSensor.cpp
++++ b/src/adc/ADCSensor.cpp
+@@ -258,5 +258,84 @@ void ADCSensor::checkThresholds()
+         return;
+     }
+ 
+-    thresholds::checkThresholdsPowerDelay(weak_from_this(), thresholdTimer);
++    if (readState == PowerState::always)
++    {
++        thresholds::checkThresholds(this);
++    }
++    else
++    {
++        thresholds::checkThresholdsPowerDelay(weak_from_this(), thresholdTimer);
++    }
++}
++
++bool ADCSensor::requiresRecreation(
++    double newScaleFactor, float newPollRate, PowerState newReadState,
++    const std::optional<BridgeGpio>& newBridgeGpio,
++    const std::vector<thresholds::Threshold>& newThresholds) const
++{
++    if (scaleFactor != newScaleFactor)
++    {
++        return true;
++    }
++    if (sensorPollMs != static_cast<unsigned int>(newPollRate * 1000))
++    {
++        return true;
++    }
++    if (readState != newReadState)
++    {
++        return true;
++    }
++    if (bridgeGpio.has_value() != newBridgeGpio.has_value())
++    {
++        return true;
++    }
++    if (bridgeGpio.has_value() && newBridgeGpio.has_value())
++    {
++        if (bridgeGpio->setupTimeMs != newBridgeGpio->setupTimeMs)
++        {
++            return true;
++        }
++    }
++
++    // Check if threshold structure changed (i.e. levels or directions
++    // added/removed)
++    size_t configuredCount = 0;
++    for (const auto& th : thresholds)
++    {
++        if (!std::isnan(th.value))
++        {
++            configuredCount++;
++        }
++    }
++    size_t newConfiguredCount = 0;
++    for (const auto& th : newThresholds)
++    {
++        if (!std::isnan(th.value))
++        {
++            newConfiguredCount++;
++        }
++    }
++    if (configuredCount != newConfiguredCount)
++    {
++        return true;
++    }
++    for (const auto& newThreshold : newThresholds)
++    {
++        if (std::isnan(newThreshold.value))
++        {
++            continue;
++        }
++        auto it = std::find_if(
++            thresholds.begin(), thresholds.end(),
++            [&newThreshold](const thresholds::Threshold& oldThreshold) {
++                return oldThreshold.level == newThreshold.level &&
++                       oldThreshold.direction == newThreshold.direction;
++            });
++        if (it == thresholds.end())
++        {
++            return true;
++        }
++    }
++
++    return false;
+ }
+diff --git a/src/adc/ADCSensor.hpp b/src/adc/ADCSensor.hpp
+index 618c43f..77f2119 100644
+--- a/src/adc/ADCSensor.hpp
++++ b/src/adc/ADCSensor.hpp
+@@ -82,6 +82,10 @@ class ADCSensor : public Sensor, public std::enable_shared_from_this<ADCSensor>
+               std::optional<BridgeGpio>&& bridgeGpio);
+     ~ADCSensor() override;
+     void setupRead();
++    bool requiresRecreation(
++        double newScaleFactor, float newPollRate, PowerState newReadState,
++        const std::optional<BridgeGpio>& newBridgeGpio,
++        const std::vector<thresholds::Threshold>& newThresholds) const;
+ 
+   private:
+     sdbusplus::asio::object_server& objServer;
+diff --git a/src/adc/ADCSensorMain.cpp b/src/adc/ADCSensorMain.cpp
+index 7949280..e6ce73b 100644
+--- a/src/adc/ADCSensorMain.cpp
++++ b/src/adc/ADCSensorMain.cpp
+@@ -195,29 +195,6 @@ void createSensors(
+                 std::string sensorName =
+                     std::get<std::string>(findSensorName->second);
+ 
+-                // on rescans, only update sensors we were signaled by
+-                auto findSensor = sensors.find(sensorName);
+-                if (!firstScan && findSensor != sensors.end())
+-                {
+-                    bool found = false;
+-                    for (auto it = sensorsChanged->begin();
+-                         it != sensorsChanged->end(); it++)
+-                    {
+-                        if (findSensor->second &&
+-                            it->ends_with(findSensor->second->name))
+-                        {
+-                            sensorsChanged->erase(it);
+-                            findSensor->second = nullptr;
+-                            found = true;
+-                            break;
+-                        }
+-                    }
+-                    if (!found)
+-                    {
+-                        continue;
+-                    }
+-                }
+-
+                 auto findCPU = baseConfiguration->second.find("CPURequired");
+                 if (findCPU != baseConfiguration->second.end())
+                 {
+@@ -264,7 +241,6 @@ void createSensors(
+                 PowerState readState = getPowerState(baseConfiguration->second);
+ 
+                 auto& sensor = sensors[sensorName];
+-                sensor = nullptr;
+ 
+                 std::optional<BridgeGpio> bridgeGpio;
+                 for (const auto& [key, cfgMap] : *sensorData)
+@@ -305,6 +281,76 @@ void createSensors(
+                     }
+                 }
+ 
++                // on rescans, only update sensors we were signaled by
++                auto findSensor = sensors.find(sensorName);
++                if (!firstScan && findSensor != sensors.end())
++                {
++                    bool found = false;
++                    for (auto it = sensorsChanged->begin();
++                         it != sensorsChanged->end(); it++)
++                    {
++                        if (findSensor->second &&
++                            it->ends_with(findSensor->second->name))
++                        {
++                            sensorsChanged->erase(it);
++                            if (findSensor->second->requiresRecreation(
++                                    scaleFactor, pollRate, readState,
++                                    bridgeGpio, sensorThresholds))
++                            {
++                                findSensor->second = nullptr;
++                                found = true;
++                            }
++                            else
++                            {
++                                for (const auto& newThreshold :
++                                     sensorThresholds)
++                                {
++                                    for (auto& oldThreshold :
++                                         findSensor->second->thresholds)
++                                    {
++                                        if (oldThreshold.level ==
++                                                newThreshold.level &&
++                                            oldThreshold.direction ==
++                                                newThreshold.direction)
++                                        {
++                                            oldThreshold.value =
++                                                newThreshold.value;
++                                            if (!std::isnan(
++                                                    newThreshold.hysteresis))
++                                            {
++                                                oldThreshold.hysteresis =
++                                                    newThreshold.hysteresis;
++                                            }
++                                            else
++                                            {
++                                                oldThreshold.hysteresis =
++                                                    findSensor->second
++                                                        ->hysteresisTrigger;
++                                            }
++                                            break;
++                                        }
++                                    }
++                                }
++                                thresholds::updateThresholds(
++                                    findSensor->second.get());
++                                findSensor->second->value =
++                                    std::numeric_limits<double>::quiet_NaN();
++                                found = false;
++                            }
++                            break;
++                        }
++                    }
++                    if (!found)
++                    {
++                        continue;
++                    }
++                }
++
++                if (sensor)
++                {
++                    sensor = nullptr;
++                }
++
+                 sensor = std::make_shared<ADCSensor>(
+                     path.string(), objectServer, dbusConnection, io, sensorName,
+                     std::move(sensorThresholds), scaleFactor, pollRate,
+diff --git a/src/psu/PSUSensor.cpp b/src/psu/PSUSensor.cpp
+index f547c80..aa773d3 100644
+--- a/src/psu/PSUSensor.cpp
++++ b/src/psu/PSUSensor.cpp
+@@ -270,5 +270,85 @@ void PSUSensor::checkThresholds()
+         return;
+     }
+ 
+-    thresholds::checkThresholdsPowerDelay(weak_from_this(), thresholdTimer);
++    if (readState == PowerState::always)
++    {
++        thresholds::checkThresholds(this);
++    }
++    else
++    {
++        thresholds::checkThresholdsPowerDelay(weak_from_this(), thresholdTimer);
++    }
++}
++
++bool PSUSensor::requiresRecreation(
++    unsigned int newFactor, double newPollRate, const PowerState& newPowerState,
++    double newMax, double newMin, double newOffset,
++    const std::vector<thresholds::Threshold>& newThresholds) const
++{
++    if (sensorFactor != newFactor)
++    {
++        return true;
++    }
++    if (sensorPollMs != static_cast<unsigned int>(newPollRate * 1000))
++    {
++        return true;
++    }
++    if (readState != newPowerState)
++    {
++        return true;
++    }
++    if (maxValue != newMax)
++    {
++        return true;
++    }
++    if (minValue != newMin)
++    {
++        return true;
++    }
++    if (sensorOffset != newOffset)
++    {
++        return true;
++    }
++
++    // Check if threshold structure changed (i.e. levels or directions
++    // added/removed)
++    size_t configuredCount = 0;
++    for (const auto& th : thresholds)
++    {
++        if (!std::isnan(th.value))
++        {
++            configuredCount++;
++        }
++    }
++    size_t newConfiguredCount = 0;
++    for (const auto& th : newThresholds)
++    {
++        if (!std::isnan(th.value))
++        {
++            newConfiguredCount++;
++        }
++    }
++    if (configuredCount != newConfiguredCount)
++    {
++        return true;
++    }
++    for (const auto& newThreshold : newThresholds)
++    {
++        if (std::isnan(newThreshold.value))
++        {
++            continue;
++        }
++        auto it = std::find_if(
++            thresholds.begin(), thresholds.end(),
++            [&newThreshold](const thresholds::Threshold& oldThreshold) {
++                return oldThreshold.level == newThreshold.level &&
++                       oldThreshold.direction == newThreshold.direction;
++            });
++        if (it == thresholds.end())
++        {
++            return true;
++        }
++    }
++
++    return false;
+ }
+diff --git a/src/psu/PSUSensor.hpp b/src/psu/PSUSensor.hpp
+index acd9fb4..65832de 100644
+--- a/src/psu/PSUSensor.hpp
++++ b/src/psu/PSUSensor.hpp
+@@ -1,10 +1,10 @@
+ #pragma once
+ 
+ #include "DeviceMgmt.hpp"
++#include "PSUEvent.hpp"
+ #include "Thresholds.hpp"
+ #include "Utils.hpp"
+ #include "sensor.hpp"
+-#include "PSUEvent.hpp"
+ 
+ #include <boost/asio/io_context.hpp>
+ #include <boost/asio/random_access_file.hpp>
+@@ -38,6 +38,11 @@ class PSUSensor : public Sensor, public std::enable_shared_from_this<PSUSensor>
+                   const std::shared_ptr<I2CDevice>& newI2CDevice);
+     void deactivate();
+     bool isActive();
++    bool requiresRecreation(
++        unsigned int newFactor, double newPollRate,
++        const PowerState& newPowerState, double newMax, double newMin,
++        double newOffset,
++        const std::vector<thresholds::Threshold>& newThresholds) const;
+ 
+     std::shared_ptr<I2CDevice> getI2CDevice() const
+     {
+diff --git a/src/psu/PSUSensorMain.cpp b/src/psu/PSUSensorMain.cpp
+index e216170..061c4c7 100644
+--- a/src/psu/PSUSensorMain.cpp
++++ b/src/psu/PSUSensorMain.cpp
+@@ -632,8 +632,8 @@ static void createSensorsCallback(
+                     }
+                     else if (sensorPathStrMax == "_rated_max")
+                     {
+-                        labelPath = boost::replace_all_copy(sensorPathStr,
+-                                                            "rated_max", "label");
++                        labelPath = boost::replace_all_copy(
++                            sensorPathStr, "rated_max", "label");
+                         ratedMaxLabel = true;
+                     }
+                     else
+@@ -1021,7 +1021,43 @@ static void createSensorsCallback(
+             auto& sensor = sensors[sensorName];
+             if (!activateOnly)
+             {
+-                sensor = nullptr;
++                if (sensor != nullptr &&
++                    sensor->requiresRecreation(
++                        factor, pollRate, readState, psuProperty.maxReading,
++                        psuProperty.minReading, psuProperty.sensorOffset,
++                        sensorThresholds))
++                {
++                    sensor = nullptr;
++                }
++                else if (sensor != nullptr)
++                {
++                    // Update thresholds in-place
++                    for (const auto& newThreshold : sensorThresholds)
++                    {
++                        for (auto& oldThreshold : sensor->thresholds)
++                        {
++                            if (oldThreshold.level == newThreshold.level &&
++                                oldThreshold.direction ==
++                                    newThreshold.direction)
++                            {
++                                oldThreshold.value = newThreshold.value;
++                                if (!std::isnan(newThreshold.hysteresis))
++                                {
++                                    oldThreshold.hysteresis =
++                                        newThreshold.hysteresis;
++                                }
++                                else
++                                {
++                                    oldThreshold.hysteresis =
++                                        sensor->hysteresisTrigger;
++                                }
++                                break;
++                            }
++                        }
++                    }
++                    thresholds::updateThresholds(sensor.get());
++                    sensor->value = std::numeric_limits<double>::quiet_NaN();
++                }
+             }
+ 
+             if (sensor != nullptr)
+@@ -1056,7 +1092,8 @@ static void createSensorsCallback(
+                     objectServer, dbusConnection, io, *psuName, baseReadState,
+                     eventPathList, groupEventPathList, "OperationalStatus",
+                     pollRate);
+-            sensors[sensorName]->setPSUOPEvent(combineEvents[*psuName + "OperationalStatus"]);
++            sensors[sensorName]->setPSUOPEvent(
++                combineEvents[*psuName + "OperationalStatus"]);
+         }
+     }
+ 
+-- 
+2.45.2
+

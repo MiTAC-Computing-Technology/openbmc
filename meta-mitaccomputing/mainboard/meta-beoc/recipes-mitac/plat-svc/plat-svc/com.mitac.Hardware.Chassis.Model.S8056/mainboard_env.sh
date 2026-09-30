@@ -46,13 +46,11 @@ exec_after_power_control () {
 }
 
 action_power_transition_off () {
-	echo "Detected host power off, stop $RAS_SVC, xyz.openbmc_project.Inventory.Item.Cpu_info.service"
+	echo "Detected host power off, stop $RAS_SVC"
 	systemctl stop $RAS_SVC
-	systemctl stop xyz.openbmc_project.Inventory.Item.Cpu_info.service
 }
 
 action_power_transition_on () {
-	echo "Detected host power on, start $RAS_SVC, xyz.openbmc_project.Inventory.Item.Cpu_info.service"
+	echo "Detected host power on, start $RAS_SVC"
 	systemctl start $RAS_SVC
-	systemctl start xyz.openbmc_project.Inventory.Item.Cpu_info.service
 }

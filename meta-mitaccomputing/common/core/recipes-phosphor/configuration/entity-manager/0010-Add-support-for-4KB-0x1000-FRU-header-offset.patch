@@ -1,0 +1,37 @@
+From 1d5271bfa499f95e5c18d40fde6d870a1de3a328 Mon Sep 17 00:00:00 2001
+From: Allen Kang <allen.kang@mitaccomputing>
+Date: Tue, 21 Apr 2026 03:04:16 +0000
+Subject: [PATCH] Add support for 4KB(0x1000) FRU header offset.
+
+The MiTAC DCSCM module(TM-DCSCM-8046-VENICE PVT), utilize the beginning
+of the EEPROM to store private hardware information, including MAC
+address and PCBA internal tracking data. As a result, the standard IPMI
+FRU header is located at an offset of 0x1000 instead of the standard
+0x0.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/fru_device/fru_utils.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/fru_device/fru_utils.cpp b/src/fru_device/fru_utils.cpp
+index 0a1f583..554e48b 100644
+--- a/src/fru_device/fru_utils.cpp
++++ b/src/fru_device/fru_utils.cpp
+@@ -765,6 +765,13 @@ bool findFRUHeader(FRUReader& reader, const std::string& errorHelp,
+         return findFRUHeader(reader, errorHelp, blockData, baseOffset);
+     }
+ 
++    // Support DCSCM modules that store FRU at 4KB offset
++    baseOffset = 0x1000;
++    if (findFRUHeader(reader, errorHelp, blockData, baseOffset))
++    {
++        return true;
++    }
++
+     lg2::debug("Illegal header {HEADER} base offset {OFFSET}", "HEADER",
+                errorHelp, "OFFSET", baseOffset);
+ 
+-- 
+2.34.1
+

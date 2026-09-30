@@ -1,0 +1,66 @@
+{
+  "Bus": "$bus",
+  "Exposes": [
+    {
+      "Address": "0x53",
+      "Bus": "$BUS",
+      "Name": "$MUXDEV $MUXCH Fru",
+      "Type": "EEPROM_24C02"
+    },
+    {
+      "Address": "0x6a",
+      "Bus": "$BUS",
+      "PowerState": "On",
+      "Thresholds": [
+        {
+          "Direction": "greater than",
+          "Name": "upper critical",
+          "Severity": 1,
+          "Value": 115
+        },
+        {
+          "Direction": "greater than",
+          "Name": "upper non critical",
+          "Severity": 0,
+          "Value": 110
+        },
+        {
+          "Direction": "less than",
+          "Name": "lower non critical",
+          "Severity": 0,
+          "Value": 5
+        },
+        {
+          "Direction": "less than",
+          "Name": "lower critical",
+          "Severity": 1,
+          "Value": 0
+        }
+      ],
+      "Name": "$MUXDEV $MUXCH TEMP_C",
+      "Type": "NVME1000"
+    }
+  ],
+  "Logging": "Off",
+  "Name": "$MUXDEV $MUXCH",
+  "Probe": "xyz.openbmc_project.FruDevice({'PRODUCT_MANUFACTURER': '(Phison).*'})",
+  "Type": "NVMe",
+  "xyz.openbmc_project.Inventory.Decorator.Asset": {
+    "Manufacturer": "$PRODUCT_MANUFACTURER",
+    "Model": "$PRODUCT_PRODUCT_NAME",
+    "PartNumber": "$PRODUCT_PART_NUMBER",
+    "SerialNumber": "$PRODUCT_SERIAL_NUMBER"
+  },
+  "xyz.openbmc_project.Inventory.Item.Chassis": {},
+  "xyz.openbmc_project.Inventory.Decorator.Revision": {
+    "Version": "mitac_nvme_phison_generic"
+  },
+  "xyz.openbmc_project.Inventory.Decorator.I2CDevice": {
+    "Address": "$ADDRESS",
+    "Bus": "$BUS"
+  },
+  "xyz.openbmc_project.Inventory.Decorator.Ipmi": {
+    "EntityId": 4,
+    "EntityInstance": "$BUS"
+  }
+}

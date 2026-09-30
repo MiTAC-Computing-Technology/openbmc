@@ -1,0 +1,53 @@
+{
+  "Exposes": [
+    {
+      "Address": "$ADDRESS",
+      "Bus": "$BUS",
+      "Name": "NIC $BUS $ADDRESS FRU",
+      "Type": "EEPROM_24C64"
+    },
+    {
+      "Address": "0x1f",
+      "Bus": "$BUS",
+      "Labels": [
+        "temp2"
+      ],
+      "Name": "NIC $BUS $ADDRESS TEMP_C",
+      "Name1": "NIC $BUS $ADDRESS TEMP_C",
+      "Thresholds": [
+        {
+          "Direction": "less than",
+          "Index": 2,
+          "Name": "lower critical",
+          "Severity": 1,
+          "Value": 5
+        },
+        {
+          "Direction": "greater than",
+          "Index": 2,
+          "Name": "upper critical",
+          "Severity": 1,
+          "Value": 105
+        }
+      ],
+      "Type": "TMP421"
+    }
+  ],
+  "Name": "NIC $BUS $ADDRESS",
+  "Probe": "xyz.openbmc_project.FruDevice({'BOARD_MANUFACTURER': 'Broadcom', 'BOARD_PART_NUMBER': 'BCM9*'})",
+  "Type": "Board",
+  "xyz.openbmc_project.Inventory.Decorator.Asset": {
+    "Manufacturer": "$BOARD_MANUFACTURER",
+    "Model": "$BOARD_PRODUCT_NAME",
+    "PartNumber": "$BOARD_PART_NUMBER",
+    "SerialNumber": "$BOARD_SERIAL_NUMBER"
+  },
+  "xyz.openbmc_project.Inventory.Decorator.I2CDevice": {
+    "Address": "$ADDRESS",
+    "Bus": "$BUS"
+  },
+  "xyz.openbmc_project.Inventory.Decorator.Ipmi": {
+    "EntityId": 11,
+    "EntityInstance": "$BUS"
+  }
+}

@@ -12,6 +12,9 @@ SRC_URI:append = "\
     file://0012-Downgrade-MCTP-driver-and-waiting-for-new-driver-eva.patch \
     file://0013-Implement-cache-for-LTC2497-driver-to-avoid-timeout-.patch \
     file://0014-Added-to-support-TUSB4041-usb-hub.patch \
+    file://0015-Extend-IS168137-driver-to-support-Renesas-RAA229620-.patch \
+    file://0016-Added-MFD-driver-to-suppport-CPLDs-on-G4826Z5-for-ve.patch \
+    file://0017-Update-Kconfig-and-Makefile-to-support-the-configura.patch \
     "
 
 do_patch:append() {

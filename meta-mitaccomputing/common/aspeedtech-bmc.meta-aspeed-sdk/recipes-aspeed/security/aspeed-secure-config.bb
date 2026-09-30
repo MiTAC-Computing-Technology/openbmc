@@ -6,11 +6,11 @@ LIC_FILES_CHKSUM = "file://${COREBASE}/meta/files/common-licenses/Apache-2.0;md5
 
 inherit allarch
 
-S = "${WORKDIR}/sources"
-UNPACKDIR = "${S}"
+S = "${UNPACKDIR}"
+
 SRC_URI = " \
-    file://configs;subdir=${S} \
-    file://keys;subdir=${S} \
+    file://configs \
+    file://keys \
     "
 
 do_patch[noexec] = "1"
@@ -26,8 +26,9 @@ do_install() {
     install -d ${D}${datadir}/aspeed-secure-config/ast2600/keys
     install -d ${D}${datadir}/aspeed-secure-config/ast2700
     install -d ${D}${datadir}/aspeed-secure-config/ast2700/otp
-    install -d ${D}${datadir}/aspeed-secure-config/ast2700/caliptra
     install -d ${D}${datadir}/aspeed-secure-config/ast2700/keys
+    install -d ${D}${datadir}/aspeed-secure-config/ast2755
+    install -d ${D}${datadir}/aspeed-secure-config/ast2755/keys
 
     install -m 0755 ${S}/configs/*.sh \
         ${D}${datadir}/aspeed-secure-config
@@ -41,8 +42,8 @@ do_install() {
         ${D}${datadir}/aspeed-secure-config/ast2700/keys
     install -m 0644 ${S}/configs/ast2700/otp/* \
         ${D}${datadir}/aspeed-secure-config/ast2700/otp
-    install -m 0644 ${S}/configs/ast2700/caliptra/* \
-        ${D}${datadir}/aspeed-secure-config/ast2700/caliptra
+    install -m 0644 ${S}/keys/ast2755/* \
+        ${D}${datadir}/aspeed-secure-config/ast2755/keys
 }
 
 BBCLASSEXTEND = "native"

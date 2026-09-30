@@ -1,0 +1,43 @@
+From c4b2ffb5c22403bb3cc6cf973c72903360e5514d Mon Sep 17 00:00:00 2001
+From: Kokila Varadharajan <kokilavaradhan@gmail.com>
+Date: Thu, 19 Feb 2026 00:47:59 -0600
+Subject: [PATCH] Add support for correct lock status in manual unlock mode
+
+This commit adds support for correctly reporting user lock
+status when the User Unlock Method is configured as 'Manual'.
+Previously, the UserLockedForFailedAttempt property incorrectly
+reported 'false' even when the user account was locked after
+exceeding maximum failed login attempts.
+
+The parseFaillockForLockout() function now includes an explicit
+check for manual unlock mode (AccountUnlockTimeout = 0) before
+performing timeout-based calculations. When AccountUnlockTimeout
+is zero, the function immediately returns locked status without
+evaluating the timeout condition, ensuring accurate status
+reporting for manual unlock configurations.
+
+Upstream-Status: Backport [https://github.com/openbmc/phosphor-user-manager/commit/c4b2ffb5c22403bb3cc6cf973c72903360e5514d]
+Signed-off-by: Kokila Varadharajan <kokilavaradhan@gmail.com>
+---
+ user_mgr.cpp | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/user_mgr.cpp b/user_mgr.cpp
+index e1a0ab4..9c0f909 100644
+--- a/user_mgr.cpp
++++ b/user_mgr.cpp
+@@ -841,8 +841,12 @@ bool UserMgr::parseFaillockForLockout(
+         return false;
+     }
+ 
+-    if (lastFailedAttempt +
+-            static_cast<time_t>(AccountPolicyIface::accountUnlockTimeout()) <=
++    uint32_t unlockTimeout = AccountPolicyIface::accountUnlockTimeout();
++    if (unlockTimeout == 0)
++    {
++        return true;
++    }
++    if (lastFailedAttempt + static_cast<time_t>(unlockTimeout) <=
+         std::time(NULL))
+     {
+         return false;

@@ -1,0 +1,32 @@
+From 5f99844caef51e39e2bb1210b7c0a7fef40c40c7 Mon Sep 17 00:00:00 2001
+From: "fredy.chen" <fredy.chen@mitaccomputing.com>
+Date: Wed, 12 Aug 2026 03:40:06 -0400
+Subject: [PATCH] Set ipmi-net restart limit
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ phosphor-ipmi-net@.service | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/phosphor-ipmi-net@.service b/phosphor-ipmi-net@.service
+index beb3785..52b6296 100644
+--- a/phosphor-ipmi-net@.service
++++ b/phosphor-ipmi-net@.service
+@@ -4,11 +4,14 @@ After=phosphor-ipmi-host.service
+ Requires=sys-subsystem-net-devices-%i.device
+ After=sys-subsystem-net-devices-%i.device
+ ConditionPathExists=/sys/class/net/%i
++StartLimitIntervalSec=120
++StartLimitBurst=30
+ 
+ [Service]
+ ExecStart=/usr/bin/netipmid -c %i
+ SyslogIdentifier=netipmid-%i
+ Restart=always
++RestartSec=1
+ RuntimeDirectory = ipmi
+ RuntimeDirectoryPreserve = yes
+ StateDirectory = ipmi
+-- 
+2.34.1
+

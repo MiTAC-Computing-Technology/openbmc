@@ -1,0 +1,72 @@
+From 45f1c1f26c37ea720df4b165025f50d83418bf45 Mon Sep 17 00:00:00 2001
+From: Allen Kang <allen.kang@mitaccomputing>
+Date: Wed, 1 Jul 2026 13:52:22 +0000
+Subject: [PATCH] Fix ipmitool power on failed
+
+Relocate the enablePassThrough(true) logic from sendPowerControlEvent()
+to currentHostStateMonitor().
+Adding a synchronous compensation check in setPowerState() to force
+pass-through on when settling into 'PowerState::off'
+
+Tested:
+ipmitool power on/off/cycle
+Power button on/off
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/power_control.cpp | 25 ++++++++++++++++---------
+ 1 file changed, 16 insertions(+), 9 deletions(-)
+
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+index e13156b..ff895a9 100644
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -582,15 +582,6 @@ static void sendPowerControlEvent(const Event event)
+         return;
+     }
+     handler(event);
+-
+-    lg2::info("enablePassThrough called in sendPowerControlEvent");
+-    if (powerState != PowerState::cycleOff &&
+-        powerState != PowerState::transitionToOff &&
+-        powerState != PowerState::transitionToCycleOff &&
+-        powerState != PowerState::gracefulTransitionToCycleOff)
+-    {
+-        enablePassThrough(true);
+-    }
+ }
+ 
+ static uint64_t getCurrentTimeMs()
+@@ -717,6 +708,12 @@ static void setPowerState(const PowerState state)
+ 
+     // Save the power state for the restore policy
+     savePowerState(state);
++
++    if (powerState == PowerState::off)
++    {
++        lg2::info("Force enabling pass-through after settling into Off state");
++        enablePassThrough(true);
++    }
+ }
+ 
+ enum class RestartCause
+@@ -1766,6 +1763,16 @@ static void currentHostStateMonitor()
+                                 "REDFISH_MESSAGE_ID=%s",
+                                 "OpenBMC.0.1.DCPowerOff", NULL);
+             }
++
++            lg2::info("enablePassThrough called in currentHostStateMonitor, current PowerState: {STATE}",
++                      "STATE", getPowerStateName(powerState));
++            if (powerState != PowerState::cycleOff &&
++                powerState != PowerState::transitionToOff &&
++                powerState != PowerState::transitionToCycleOff &&
++                powerState != PowerState::gracefulTransitionToCycleOff)
++            {
++                enablePassThrough(true);
++            }
+         });
+ }
+ 
+-- 
+2.34.1
+

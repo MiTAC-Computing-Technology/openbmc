@@ -4,7 +4,7 @@ source $LIBPATH/mitac-common-functions
 
 PLATFORM_COMPACT_NAME="com.mitac.Hardware.Chassis.Model.Capri_V2"
 MB_LIB_PATH="$LIBPATH/plat-svc/$PLATFORM_COMPACT_NAME"
-KERNEL_DTS_FN=aspeed-bmc-mitac-capri2
+KERNEL_DTS_FN=aspeed-bmc-mitac-capri_v2
 FDFFILE="conf-$KERNEL_DTS_FN.dtb"
 
 DO_REBOOT=0

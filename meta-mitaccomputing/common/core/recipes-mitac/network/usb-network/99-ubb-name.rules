@@ -1,0 +1,1 @@
+SUBSYSTEM=="net", ACTION=="add", DEVPATH=="*/1e6a3000.usb/*", NAME="eth-ubb"

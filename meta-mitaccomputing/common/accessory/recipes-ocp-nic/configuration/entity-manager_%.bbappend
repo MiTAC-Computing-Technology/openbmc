@@ -4,6 +4,7 @@ inherit obmc-phosphor-systemd systemd
 
 SRC_URI:append= "\
     file://mitac_ocpnic_nvidia_connectx7-ocp3p0.json \
+    file://mitac_ocpnic_broadcom_BCM9.json \
     "
 
 RDEPENDS:${PN}:append = " bash"

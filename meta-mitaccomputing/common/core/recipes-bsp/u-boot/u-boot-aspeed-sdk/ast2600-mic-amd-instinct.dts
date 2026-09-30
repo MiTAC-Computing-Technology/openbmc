@@ -1,0 +1,212 @@
+/dts-v1/;
+
+#include "ast2600-u-boot.dtsi"
+
+/ {
+	model = "AST2600 AMD Instinct 0518";
+	compatible = "aspeed,ast2600-evb", "aspeed,ast2600";
+
+	memory {
+		device_type = "memory";
+		reg = <0x80000000 0x40000000>;
+	};
+
+	chosen {
+		stdout-path = &uart5;
+	};
+
+	aliases {
+		spi0 = &fmc;
+		spi1 = &spi1;
+		spi2 = &spi2;
+		ethernet0 = &mac0;
+	};
+
+	cpus {
+		cpu@0 {
+			clock-frequency = <800000000>;
+		};
+		cpu@1 {
+			clock-frequency = <800000000>;
+		};
+	};
+};
+
+&uart2 {
+	status = "okay";
+};
+
+&uart5 {
+	bootph-all;
+	status = "okay";
+};
+
+&sdrammc {
+	clock-frequency = <400000000>;
+};
+
+&wdt1 {
+	status = "okay";
+};
+
+&wdt2 {
+	status = "okay";
+};
+
+&wdt3 {
+	status = "okay";
+};
+
+&mdio0 {
+    status = "okay";
+    #address-cells = <1>;
+    #size-cells = <0>;
+    ethphy0: ethernet-phy@0 {
+        compatible = "ethernet-phy-ieee802.3-c22";
+        reg = <0>;
+    };
+};
+
+&mdio2 {
+    status = "okay";
+    #address-cells = <1>;
+    #size-cells = <0>;
+    ethphy2: ethernet-phy@0 {
+        compatible = "ethernet-phy-ieee802.3-c22";
+        reg = <0>;
+    };
+};
+
+&mac0 {
+	status = "okay";
+	phy-mode = "rgmii-rxid";
+	phy-handle = <&ethphy0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_rgmii1_default>;
+	tx-internal-delay-ps = <720>;
+	rx-internal-delay-ps = <450>;
+};
+
+&mac2 {
+
+#if 0
+    /* On G4826Z5 this configuration make network unavailable even boot to Kernel.
+       However on G8825Z5 the network is normal.
+       Disable for now.
+    */
+    status = "okay";
+    phy-mode = "rgmii";
+    phy-handle = <&ethphy2>;
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_rgmii3_default>;
+#endif
+
+#if 1
+    status = "okay";
+    phy-mode = "NC-SI";
+    use-ncsi;
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_rmii3_default>;
+    /delete-property/phy-handle;
+#endif
+
+#if 0
+    status = "okay";
+    phy-mode = "rgmii-rxid";
+    phy-handle = <&ethphy2>;
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_rgmii3_default>;
+#endif
+};
+
+&mac3 {
+    status = "okay";
+    phy-mode = "NC-SI";
+    use-ncsi;
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_rmii4_default>;
+    /delete-property/phy-handle;
+};
+
+// BMC FLASH
+&fmc {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_fmcquad_default>;
+
+	flash@0 {
+		status = "okay";
+		spi-max-frequency = <50000000>;
+		spi-tx-bus-width = <4>;
+		spi-rx-bus-width = <4>;
+	};
+};
+
+// FPGA and BIOS FLASH
+&spi1 {
+        status = "okay";
+
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_spi1_default &pinctrl_spi1quad_default>;
+
+        flash@0 {
+                status = "okay";
+                spi-max-frequency = <50000000>;
+                spi-tx-bus-width = <4>;
+                spi-rx-bus-width = <4>;
+        };
+};
+
+&spi2 {
+        status = "okay";
+
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_spi2_default &pinctrl_spi2quad_default>;
+
+        flash@0 {
+                status = "okay";
+                spi-max-frequency = <50000000>;
+                spi-tx-bus-width = <4>;
+                spi-rx-bus-width = <4>;
+        };
+};
+
+&emmc {
+	bootph-all;
+	timing-phase = <0x000f0097>;
+};
+
+&pcie_phy1 {
+        status = "disabled";
+};
+
+&pcie0 {
+	status = "disabled";
+};
+
+&ehci1 {
+	status = "disabled";
+};
+
+&display_port {
+	status = "disabled";
+};
+
+&scu {
+    mac3-clk-delay = <0x0a 0x04
+                      0x08 0x04
+                      0x08 0x04>;
+    mac0-clk-delay = <0x10 0x0a
+                      0x10 0x10
+                      0x10 0x10>;
+};
+
+&hace {
+	bootph-all;
+	status = "okay";
+};
+
+&acry {
+	bootph-all;
+	status = "disabled";
+};

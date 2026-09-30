@@ -1,0 +1,32 @@
+From 301eb27b6341f7340d9f3bff7d8795bca5cd4129 Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Wed, 5 Aug 2026 21:02:06 -0400
+Subject: [PATCH] State: Add BMC reboot causes
+
+Add FirmwareUpdate and ColdResetCommand to RebootCause so callers can report these reset sources explicitly.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ yaml/xyz/openbmc_project/State/BMC.interface.yaml | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/yaml/xyz/openbmc_project/State/BMC.interface.yaml b/yaml/xyz/openbmc_project/State/BMC.interface.yaml
+index ff1a228..cbb5abb 100644
+--- a/yaml/xyz/openbmc_project/State/BMC.interface.yaml
++++ b/yaml/xyz/openbmc_project/State/BMC.interface.yaml
+@@ -85,6 +85,12 @@ enumerations:
+           - name: "Software"
+             description: >
+                 Last reboot is caused by Software
++          - name: "FirmwareUpdate"
++            description: >
++                Last reboot is caused by a firmware update
++          - name: "ColdResetCommand"
++            description: >
++                Last reboot is caused by a cold reset command
+           - name: "Unknown"
+             description: >
+                 Last reboot is caused by Unknown
+-- 
+2.34.1
+

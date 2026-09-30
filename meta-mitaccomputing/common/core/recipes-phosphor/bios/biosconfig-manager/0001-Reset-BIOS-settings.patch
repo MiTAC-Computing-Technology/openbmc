@@ -1,0 +1,67 @@
+From 352725233bce9e56de81f39f60caa97be57fded3 Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Thu, 18 Jun 2026 05:27:04 +0000
+Subject: [PATCH] Reset BIOS settings
+
+Delete all files in the /var/oob/ directory.
+busctl set-property xyz.openbmc_project.BIOSConfigManager /xyz/openbmc_project/bios_config/manager xyz.openbmc_project.BIOSConfig.Manager ResetBIOSSettings s xyz.openbmc_project.BIOSConfig.Manager.ResetFlag.FactoryDefault
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ include/manager.hpp |  4 +---
+ src/manager.cpp     | 17 +++++++++++++++++
+ 2 files changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/include/manager.hpp b/include/manager.hpp
+index 41977ca..1abbc40 100644
+--- a/include/manager.hpp
++++ b/include/manager.hpp
+@@ -57,8 +57,6 @@ class Manager : public Base
+                    std::vector<std::tuple<
+                        BoundType, std::variant<int64_t, std::string>>>>>;
+ 
+-    using ResetFlag = std::map<std::string, ResetFlag>;
+-
+     using PendingAttributes =
+         std::map<std::string,
+                  std::tuple<AttributeType, std::variant<int64_t, std::string>>>;
+@@ -117,7 +115,7 @@ class Manager : public Base
+      */
+     BaseTable baseBIOSTable(BaseTable value) override;
+ 
+-    ResetFlag resetBIOSSettings(ResetFlag value);
++    ResetFlag resetBIOSSettings(ResetFlag value) override;
+ 
+     /** @brief Set the PendingAttributes property, additionally checks if the
+      *         attributes are in the BaseBIOSTable, whether the attributes are
+diff --git a/src/manager.cpp b/src/manager.cpp
+index cfb7a4e..6d8e4f8 100644
+--- a/src/manager.cpp
++++ b/src/manager.cpp
+@@ -103,6 +103,23 @@ Manager::BaseTable Manager::baseBIOSTable(BaseTable value)
+     return baseTable;
+ }
+ 
++Manager::ResetFlag Manager::resetBIOSSettings(ResetFlag value)
++{
++    if (value == Base::ResetFlag::FactoryDefaults)
++    {
++        const fs::path oobDir{"/var/oob"};
++        std::error_code ec;
++
++        for (const auto& entry : fs::directory_iterator(oobDir, ec))
++        {
++            fs::remove_all(entry.path(), ec);
++            ec.clear();
++        }
++    }
++
++    return Base::resetBIOSSettings(value, false);
++}
++
+ bool Manager::validateEnumOption(
+     const std::string& attrValue,
+     const std::vector<std::tuple<BoundType, std::variant<int64_t, std::string>,
+-- 
+2.43.0
+

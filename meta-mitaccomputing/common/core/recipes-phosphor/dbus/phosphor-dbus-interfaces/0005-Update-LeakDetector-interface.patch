@@ -1,0 +1,66 @@
+From 622ab3b032fcb52a505bba44c6109297e0f26945 Mon Sep 17 00:00:00 2001
+From: Jian-Ming Wang <jian.ming.wang@mitaccomputing.com>
+Date: Thu, 11 Jun 2026 09:33:02 +0000
+Subject: [PATCH 1/1] Update LeakDetector interface.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ .../State/Leak/Detector.interface.yaml        | 32 +++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/yaml/xyz/openbmc_project/State/Leak/Detector.interface.yaml b/yaml/xyz/openbmc_project/State/Leak/Detector.interface.yaml
+index d412192..81f9582 100644
+--- a/yaml/xyz/openbmc_project/State/Leak/Detector.interface.yaml
++++ b/yaml/xyz/openbmc_project/State/Leak/Detector.interface.yaml
+@@ -18,6 +18,18 @@ properties:
+       type: enum[self.DetectorType]
+       description: >
+           The type of the leak detector.
++    - name: WarningReactionType
++      type: enum[self.ReactionType]
++      description: >
++          The WarningReactionType of the leak detector.
++      flags:
++          - emits_change
++    - name: CriticalReactionType
++      type: enum[self.ReactionType]
++      description: >
++          The CriticalReactionType of the leak detector.
++      flags:
++          - emits_change
+ 
+ enumerations:
+     - name: DetectorType
+@@ -28,9 +40,29 @@ enumerations:
+           - name: LeakSensingCable
+             description: >
+                 A leak sensing cable.
++          - name: Moisture
++            description: >
++                A Moisture Sensor.
++          - name: FloatSwitch
++            description: >
++                A Float Switch Sensor.
+           - name: Unknown
+             description: >
+                 An unknown detector type
++    - name: ReactionType
++      description: >
++          This indicates the reaction of leak detector as in Redfish LeakDetector
++          schema https://redfish.dmtf.org/schemas/v1/LeakDetector.v1_6_0.json.
++      values:
++          - name: None
++            description: >
++                No reaction..
++          - name: ForceOff
++            description: >
++                Forcefully shut down the device, equipment, or system.
++          - name: GracefulShutdown
++            description: >
++                Gracefully shut down the device, equipment, or system.
+     - name: DetectorState
+       description: >
+           This indicates the state of the leak detector
+-- 
+2.43.0
+

@@ -1,0 +1,416 @@
+From ad661a1e89ba52d9926c8298d2bae7091f4189ae Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Tue, 1 Sep 2026 00:55:01 +0000
+Subject: [PATCH] Support per-update firmware apply options
+
+Implement StartUpdateOptions while preserving the existing StartUpdate
+interface and update flow.
+
+Parse ResetSettingsToDefault from the update options and expose its value
+through the per-upload ApplyOptions ClearConfig property. Request a BMC
+factory reset after a successful immediate firmware update when
+ClearConfig is enabled.
+
+Provide a compatibility handler for other software update targets that
+currently ignore the supplied options.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ bmc/activation.cpp                 | 10 +++++++
+ bmc/activation.hpp                 | 48 ++++++++++++++++++++++++++++--
+ bmc/item_updater.cpp               | 19 +++++++-----
+ bmc/item_updater.hpp               | 13 ++++----
+ bmc/update_manager.cpp             | 34 ++++++++++++++++++++-
+ bmc/update_manager.hpp             | 20 +++++++++++++
+ common/include/software_update.hpp |  4 +++
+ common/src/software_update.cpp     |  7 +++++
+ 8 files changed, 139 insertions(+), 16 deletions(-)
+
+diff --git a/bmc/activation.cpp b/bmc/activation.cpp
+index 6d154af..f0779ea 100644
+--- a/bmc/activation.cpp
++++ b/bmc/activation.cpp
+@@ -333,6 +333,11 @@ void Activation::onFlashWriteSuccess()
+             redfishLog("BMCBootReason", "firmware update");
+         }
+ 
++        if (checkClearConfig())
++        {
++            parent.reset();
++        }
++
+         try
+         {
+             redfishLog("FirmwareUpdateStarted", "Start the firmware update");
+@@ -533,6 +538,11 @@ bool Activation::checkApplyTimeImmediate()
+     return false;
+ }
+ 
++bool Activation::checkClearConfig()
++{
++    return applyOptions && applyOptions->clearConfig();
++}
++
+ #ifdef HOST_BIOS_UPGRADE
+ void Activation::flashWriteHost()
+ {
+diff --git a/bmc/activation.hpp b/bmc/activation.hpp
+index 130aed3..951b73f 100644
+--- a/bmc/activation.hpp
++++ b/bmc/activation.hpp
+@@ -12,12 +12,15 @@
+ #include <xyz/openbmc_project/Association/Definitions/server.hpp>
+ #include <xyz/openbmc_project/Software/Activation/server.hpp>
+ #include <xyz/openbmc_project/Software/ActivationBlocksTransition/server.hpp>
++#include <xyz/openbmc_project/Software/ApplyOptions/server.hpp>
+ #include <xyz/openbmc_project/Software/ApplyTime/common.hpp>
+ 
+ #ifdef WANT_SIGNATURE_VERIFY
+ #include <filesystem>
+ #endif
+ 
++#include <optional>
++
+ namespace phosphor
+ {
+ namespace software
+@@ -34,6 +37,8 @@ using AssociationList =
+ using ActivationInherit = sdbusplus::server::object_t<
+     sdbusplus::server::xyz::openbmc_project::software::Activation,
+     sdbusplus::server::xyz::openbmc_project::association::Definitions>;
++using ApplyOptionsInherit = sdbusplus::server::object_t<
++    sdbusplus::server::xyz::openbmc_project::software::ApplyOptions>;
+ using ActivationBlocksTransitionInherit =
+     sdbusplus::server::object_t<sdbusplus::server::xyz::openbmc_project::
+                                     software::ActivationBlocksTransition>;
+@@ -57,6 +62,20 @@ class ItemUpdater;
+ class Activation;
+ class RedundancyPriority;
+ 
++/** @class ApplyOptions
++ *  @brief Per-upload firmware apply options implementation.
++ *  @details Implements xyz.openbmc_project.Software.ApplyOptions for the
++ *  lifetime of an uploaded firmware Activation object.
++ */
++class ApplyOptions : public ApplyOptionsInherit
++{
++  public:
++    /** @brief Constructs ApplyOptions on an uploaded image object. */
++    ApplyOptions(sdbusplus::bus_t& bus, const std::string& path) :
++        ApplyOptionsInherit(bus, path.c_str(), action::emit_interface_added)
++    {}
++};
++
+ /** @class RedundancyPriority
+  *  @brief OpenBMC RedundancyPriority implementation
+  *  @details A concrete implementation for
+@@ -193,12 +212,16 @@ class Activation : public ActivationInherit, public Flash
+      * @param[in] versionId  - The software version id
+      * @param[in] activationStatus - The status of Activation
+      * @param[in] assocs - Association objects
++     * @param[in] createApplyOptions - Whether this is an uploaded image that
++     *                                 needs per-image apply options
++     * @param[in] clearConfig - Initial ClearConfig value, if supplied
+      */
+     Activation(sdbusplus::async::context& ctx, const std::string& path,
+                ItemUpdater& parent, std::string& versionId,
+                sdbusplus::server::xyz::openbmc_project::software::Activation::
+                    Activations activationStatus,
+-               AssociationList& assocs) :
++               AssociationList& assocs, bool createApplyOptions,
++               std::optional<bool> clearConfig = std::nullopt) :
+         ActivationInherit(ctx.get_bus(), path.c_str(),
+                           ActivationInherit::action::defer_emit),
+         ctx(ctx), bus(ctx.get_bus()), path(path), parent(parent),
+@@ -215,8 +238,18 @@ class Activation : public ActivationInherit, public Flash
+         activation(activationStatus);
+         associations(assocs);
+ 
+-        // Emit deferred signal.
++        // Emit the Activation object's deferred signal before adding the
++        // optional per-upload interface.
+         emit_object_added();
++
++        if (createApplyOptions)
++        {
++            applyOptions = std::make_unique<ApplyOptions>(bus, path);
++            if (clearConfig.has_value())
++            {
++                applyOptions->clearConfig(*clearConfig);
++            }
++        }
+     }
+ 
+     /** @brief Overloaded Activation property setter function
+@@ -314,6 +347,14 @@ class Activation : public ActivationInherit, public Flash
+   private:
+     void redfishLog(const std::string& id, const std::string& message);
+ 
++    /**
++     * @brief Check whether configuration should be cleared for this update.
++     *
++     * @return true if this upload's ClearConfig option is set; false if the
++     *         option is unset or this activation has no ApplyOptions interface.
++     **/
++    bool checkClearConfig();
++
+     /** @brief Schedule cleanup of the uploaded activation object. */
+     void scheduleUploadActivationCleanup();
+ 
+@@ -357,6 +398,9 @@ class Activation : public ActivationInherit, public Flash
+     /** @brief Persistent ActivationProgress dbus object */
+     std::unique_ptr<ActivationProgress> activationProgress;
+ 
++    /** @brief Per-upload ApplyOptions dbus object */
++    std::unique_ptr<ApplyOptions> applyOptions;
++
+     /** @brief Apply time */
+     ApplyTimeIntf::RequestedApplyTimes applyTime;
+ 
+diff --git a/bmc/item_updater.cpp b/bmc/item_updater.cpp
+index 1fb2bdb..f10be6c 100644
+--- a/bmc/item_updater.cpp
++++ b/bmc/item_updater.cpp
+@@ -141,7 +141,8 @@ void ItemUpdater::createActivation(sdbusplus::message_t& msg)
+ 
+ void ItemUpdater::createActivationWithApplyTime(
+     std::string& id, std::string& path,
+-    ApplyTimeIntf::RequestedApplyTimes applyTime)
++    ApplyTimeIntf::RequestedApplyTimes applyTime,
++    std::optional<bool> clearConfig)
+ {
+     info("Creating Activation object for id: {ID}", "ID", id);
+     AssociationList associations = {};
+@@ -152,7 +153,7 @@ void ItemUpdater::createActivationWithApplyTime(
+     activations.insert(std::make_pair(
+         id, std::make_unique<Activation>(
+                 ctx, path, *this, id, server::Activation::Activations::NotReady,
+-                associations)));
++                associations, true, clearConfig)));
+     activations[id]->applyTime = applyTime;
+ }
+ 
+@@ -196,8 +197,9 @@ ActivationIntf::Activations ItemUpdater::verifyAndCreateObjects(
+     if (activation == activations.end())
+     {
+         activations.insert(std::make_pair(
+-            id, std::make_unique<Activation>(ctx, path, *this, id,
+-                                             activationState, associations)));
++            id,
++            std::make_unique<Activation>(ctx, path, *this, id, activationState,
++                                         associations, true)));
+     }
+     else
+     {
+@@ -396,9 +398,10 @@ void ItemUpdater::processBMCImage()
+             versions.insert(std::make_pair(id, std::move(versionPtr)));
+ 
+             // Create Activation instance for this version.
+-            activations.insert(std::make_pair(
+-                id, std::make_unique<Activation>(
+-                        ctx, path, *this, id, activationState, associations)));
++            activations.insert(
++                std::make_pair(id, std::make_unique<Activation>(
++                                       ctx, path, *this, id, activationState,
++                                       associations, false)));
+ 
+ #ifdef BMC_STATIC_DUAL_IMAGE
+             uint8_t priority;
+@@ -1012,7 +1015,7 @@ void ItemUpdater::createBIOSObject()
+     AssociationList assocs;
+     biosActivation = std::make_unique<Activation>(
+         ctx, path, *this, versionId, server::Activation::Activations::Active,
+-        assocs);
++        assocs, false);
+     auto dummyErase = [](const std::string& /*entryId*/) {
+         // Do nothing;
+     };
+diff --git a/bmc/item_updater.hpp b/bmc/item_updater.hpp
+index eeb66d1..80828a4 100644
+--- a/bmc/item_updater.hpp
++++ b/bmc/item_updater.hpp
+@@ -14,6 +14,7 @@
+ #include <xyz/openbmc_project/Control/FieldMode/server.hpp>
+ #include <xyz/openbmc_project/Software/MinimumVersion/server.hpp>
+ 
++#include <optional>
+ #include <string>
+ #include <vector>
+ 
+@@ -166,10 +167,12 @@ class ItemUpdater : public ItemUpdaterInherit
+      * @param[in] id - The unique identifier for the update.
+      * @param[in] path - The object path for the activation object.
+      * @param[in] applyTime - The apply time for the image
++     * @param[in] clearConfig - Initial ClearConfig value, if supplied
+      */
+     void createActivationWithApplyTime(
+         std::string& id, std::string& path,
+-        ApplyTimeIntf::RequestedApplyTimes applyTime);
++        ApplyTimeIntf::RequestedApplyTimes applyTime,
++        std::optional<bool> clearConfig = std::nullopt);
+ 
+     /**
+      * @brief Request the activation for the specified update.
+@@ -207,6 +210,10 @@ class ItemUpdater : public ItemUpdaterInherit
+      */
+     void deleteAll() override;
+ 
++    /** @brief BMC factory reset - marks the read-write partition for
++     * recreation upon reboot. */
++    void reset() override;
++
+     /** @brief Creates an active association to the
+      *  newly active software image
+      *
+@@ -299,10 +306,6 @@ class ItemUpdater : public ItemUpdaterInherit
+      */
+     ActivationStatus validateSquashFSImage(const std::string& filePath);
+ 
+-    /** @brief BMC factory reset - marks the read-write partition for
+-     * recreation upon reboot. */
+-    void reset() override;
+-
+     /**
+      * @brief Enables field mode, if value=true.
+      *
+diff --git a/bmc/update_manager.cpp b/bmc/update_manager.cpp
+index a08550a..1ee8dd2 100644
+--- a/bmc/update_manager.cpp
++++ b/bmc/update_manager.cpp
+@@ -245,6 +245,14 @@ auto Manager::processImage(sdbusplus::message::unix_fd image,
+ sdbusplus::message::object_path Manager::startUpdate(
+     sdbusplus::message::unix_fd image,
+     ApplyTimeIntf::RequestedApplyTimes applyTime)
++{
++    return startUpdateImpl(image, applyTime, std::nullopt);
++}
++
++sdbusplus::message::object_path Manager::startUpdateImpl(
++    sdbusplus::message::unix_fd image,
++    ApplyTimeIntf::RequestedApplyTimes applyTime,
++    std::optional<bool> clearConfig)
+ {
+     info("Starting update for image {FD}", "FD", static_cast<int>(image));
+     using sdbusplus::xyz::openbmc_project::Common::Error::Unavailable;
+@@ -260,7 +268,8 @@ sdbusplus::message::object_path Manager::startUpdate(
+     auto objPath = std::string{SOFTWARE_OBJPATH} + '/' + id;
+ 
+     // Create Activation Object
+-    itemUpdater.createActivationWithApplyTime(id, objPath, applyTime);
++    itemUpdater.createActivationWithApplyTime(id, objPath, applyTime,
++                                              clearConfig);
+ 
+     int newFd = dup(image);
+     ctx.spawn(processImage(newFd, applyTime, id, objPath));
+@@ -268,4 +277,27 @@ sdbusplus::message::object_path Manager::startUpdate(
+     return sdbusplus::message::object_path(objPath);
+ }
+ 
++sdbusplus::message::object_path Manager::startUpdateOptions(
++    sdbusplus::message::unix_fd image,
++    ApplyTimeIntf::RequestedApplyTimes applyTime, UpdateOptions options)
++{
++    std::optional<bool> clearConfig;
++    auto option = options.find("ResetSettingsToDefault");
++    if (option != options.end())
++    {
++        if (const auto* value = std::get_if<bool>(&option->second))
++        {
++            clearConfig = *value;
++            info("ResetSettingsToDefault is {CLEAR_CONFIG}", "CLEAR_CONFIG",
++                 *value);
++        }
++        else
++        {
++            error("ResetSettingsToDefault option must be a boolean");
++        }
++    }
++
++    return startUpdateImpl(image, applyTime, clearConfig);
++}
++
+ } // namespace phosphor::software::update
+diff --git a/bmc/update_manager.hpp b/bmc/update_manager.hpp
+index caba541..ac70217 100644
+--- a/bmc/update_manager.hpp
++++ b/bmc/update_manager.hpp
+@@ -5,9 +5,13 @@
+ #include <sdbusplus/async.hpp>
+ #include <xyz/openbmc_project/Software/Update/server.hpp>
+ 
++#include <cstdint>
++#include <map>
++#include <optional>
+ #include <random>
+ #include <string>
+ #include <tuple>
++#include <variant>
+ 
+ namespace phosphor::software::updater
+ {
+@@ -23,6 +27,8 @@ using ItemUpdaterIntf = phosphor::software::updater::ItemUpdater;
+ 
+ using ApplyTimeIntf =
+     sdbusplus::common::xyz::openbmc_project::software::ApplyTime;
++using UpdateOptions =
++    std::map<std::string, std::variant<bool, std::string, uint64_t>>;
+ 
+ /** @class Manager
+  *  @brief Processes the image file from update D-Bus interface.
+@@ -52,6 +58,20 @@ class Manager : public UpdateIntf
+         sdbusplus::message::unix_fd image,
+         ApplyTimeIntf::RequestedApplyTimes applyTime) override;
+ 
++    /** @brief Implementation for StartUpdateOptions
++     *  Start a firmware update using the existing StartUpdate flow.
++     */
++    sdbusplus::message::object_path startUpdateOptions(
++        sdbusplus::message::unix_fd image,
++        ApplyTimeIntf::RequestedApplyTimes applyTime,
++        UpdateOptions options) override;
++
++    /** @brief Common implementation for StartUpdate methods. */
++    sdbusplus::message::object_path startUpdateImpl(
++        sdbusplus::message::unix_fd image,
++        ApplyTimeIntf::RequestedApplyTimes applyTime,
++        std::optional<bool> clearConfig);
++
+     /* @brief Process the image supplied via image fd */
+     auto processImage(sdbusplus::message::unix_fd image,
+                       ApplyTimeIntf::RequestedApplyTimes applyTime,
+diff --git a/common/include/software_update.hpp b/common/include/software_update.hpp
+index 406c282..58e0f57 100644
+--- a/common/include/software_update.hpp
++++ b/common/include/software_update.hpp
+@@ -26,6 +26,10 @@ class SoftwareUpdate :
+     auto method_call(start_update_t su, auto image, auto applyTime)
+         -> sdbusplus::async::task<start_update_t::return_type>;
+ 
++    auto method_call(start_update_options_t suo, auto image, auto applyTime,
++                     auto options)
++        -> sdbusplus::async::task<start_update_options_t::return_type>;
++
+     auto get_property(allowed_apply_times_t aat) const;
+ 
+   private:
+diff --git a/common/src/software_update.cpp b/common/src/software_update.cpp
+index 26a4602..ee2f572 100644
+--- a/common/src/software_update.cpp
++++ b/common/src/software_update.cpp
+@@ -97,6 +97,13 @@ auto SoftwareUpdate::method_call(start_update_t /*unused*/, auto image,
+     co_return newObjPath;
+ }
+ 
++auto SoftwareUpdate::method_call(start_update_options_t /*unused*/, auto image,
++                                 auto applyTime, auto /*options*/)
++    -> sdbusplus::async::task<start_update_options_t::return_type>
++{
++    return method_call(start_update_t{}, image, applyTime);
++}
++
+ auto SoftwareUpdate::get_property(allowed_apply_times_t /*unused*/) const
+ {
+     return allowedApplyTimes;
+-- 
+2.43.0
+

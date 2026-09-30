@@ -52,13 +52,11 @@ action_power_transition_on () {
 	i2cset -f -y 3 0x70 0x40 0xc0
 	i2cset -f -y 3 0x70 0x41 0xc0
 
-	echo "Detected host power on, start $RAS_SVC, xyz.openbmc_project.Inventory.Item.Cpu_info.service"
+	echo "Detected host power on, start $RAS_SVC"
 	systemctl start $RAS_SVC
-	systemctl start xyz.openbmc_project.Inventory.Item.Cpu_info.service
 }
 
 action_power_transition_off () {
-	echo "Detected host power off, stop $RAS_SVC, xyz.openbmc_project.Inventory.Item.Cpu_info.service"
+	echo "Detected host power off, stop $RAS_SVC"
 	systemctl stop $RAS_SVC
-	systemctl stop xyz.openbmc_project.Inventory.Item.Cpu_info.service
 }

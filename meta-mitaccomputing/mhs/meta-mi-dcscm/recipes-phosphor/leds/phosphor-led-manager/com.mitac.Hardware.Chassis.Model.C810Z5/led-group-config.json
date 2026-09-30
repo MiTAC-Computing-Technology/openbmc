@@ -1,0 +1,239 @@
+{
+    "leds": [
+	{
+            "group" : "bmc_booted",
+            "members" : [
+                {
+                    "Name": "bmc_heartbeat",
+                    "Action": "Blink",
+                    "DutyOn": 50,
+                    "Period": 1000,
+                    "Priority": "On"
+                }
+            ]
+        },
+	{
+            "group": "power_on",
+            "members": [
+            ]
+        },
+        {
+            "group": "enclosure_fault",
+            "members": [
+            ]
+        },
+        {
+            "group": "enclosure_identify_blink",
+            "members": [
+                {
+                    "Name": "identify",
+                    "Action": "Blink",
+                    "DutyOn": 50,
+                    "Period": 1000,
+                    "Priority": "Blink"
+                }
+            ]
+        },
+        {
+            "group": "enclosure_identify",
+            "members": [
+                {
+                    "Name": "identify",
+                    "Action": "On",
+                    "Priority": "Blink"
+                }
+            ]
+        },
+        {
+            "group": "fan_fault",
+            "members": [
+            ]
+        },
+        {
+            "group": "fan1_identify",
+            "members": [
+                {
+                    "Name": "fan1_fault",
+                    "Action": "Blink",
+                    "DutyOn": 50,
+                    "Period": 1000,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
+            "group": "fan1_fault",
+            "members": [
+                {
+                    "Name": "fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                },
+                {
+                    "Name": "fan1_fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
+            "group": "fan2_identify",
+            "members": [
+                {
+                    "Name": "fan2_fault",
+                    "Action": "Blink",
+                    "DutyOn": 50,
+                    "Period": 1000,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
+            "group": "fan2_fault",
+            "members": [
+                {
+                    "Name": "fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                },
+                {
+                    "Name": "fan2_fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
+            "group": "fan3_identify",
+            "members": [
+                {
+                    "Name": "fan3_fault",
+                    "Action": "Blink",
+                    "DutyOn": 50,
+                    "Period": 1000,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
+            "group": "fan3_fault",
+            "members": [
+                {
+                    "Name": "fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                },
+                {
+                    "Name": "fan3_fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
+            "group": "fan4_identify",
+            "members": [
+                {
+                    "Name": "fan4_fault",
+                    "Action": "Blink",
+                    "DutyOn": 50,
+                    "Period": 1000,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
+            "group": "fan4_fault",
+            "members": [
+                {
+                    "Name": "fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                },
+                {
+                    "Name": "fan4_fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
+            "group": "fan5_identify",
+            "members": [
+                {
+                    "Name": "fan5_fault",
+                    "Action": "Blink",
+                    "DutyOn": 50,
+                    "Period": 1000,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
+            "group": "fan5_fault",
+            "members": [
+                {
+                    "Name": "fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                },
+                {
+                    "Name": "fan5_fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
+            "group": "fan6_identify",
+            "members": [
+                {
+                    "Name": "fan6_fault",
+                    "Action": "Blink",
+                    "DutyOn": 50,
+                    "Period": 1000,
+                    "Priority": "On"
+                }
+            ]
+        },
+        {
+            "group": "fan6_fault",
+            "members": [
+                {
+                    "Name": "fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                },
+                {
+                    "Name": "fan6_fault",
+                    "Action": "On",
+                    "DutyOn": 50,
+                    "Period": 0,
+                    "Priority": "On"
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,36 @@
+From e990571cc641529eee527fe7d5544c865d3b6cc5 Mon Sep 17 00:00:00 2001
+From: Jian-Ming Wang <jian.ming.wang@mitaccomputing.com>
+Date: Tue, 12 May 2026 07:24:37 +0000
+Subject: [PATCH 1/1] Extend IS168137 driver to support Renesas RAA229620 and
+ RAA229621.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ drivers/hwmon/pmbus/isl68137.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/hwmon/pmbus/isl68137.c b/drivers/hwmon/pmbus/isl68137.c
+index 7e53fb1d5ea3..533c0bc13b1d 100644
+--- a/drivers/hwmon/pmbus/isl68137.c
++++ b/drivers/hwmon/pmbus/isl68137.c
+@@ -61,6 +61,8 @@ enum chips {
+ 	raa228228,
+ 	raa229001,
+ 	raa229004,
++	raa229620,
++	raa229621
+ };
+ 
+ enum variants {
+@@ -313,6 +315,8 @@ static const struct i2c_device_id raa_dmpvr_id[] = {
+ 	{"raa228228", raa_dmpvr2_2rail_nontc},
+ 	{"raa229001", raa_dmpvr2_2rail},
+ 	{"raa229004", raa_dmpvr2_2rail},
++	{"raa229620", raa_dmpvr2_2rail},
++	{"raa229621", raa_dmpvr2_2rail},
+ 	{}
+ };
+ 
+-- 
+2.43.0
+

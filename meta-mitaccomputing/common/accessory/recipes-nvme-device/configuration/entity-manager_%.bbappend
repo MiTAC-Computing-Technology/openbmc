@@ -7,6 +7,7 @@ SRC_URI:append= "\
     file://mitac_nvme_intel_p_series.json \
     file://mitac_nvme_kioxia_generic.json \
     file://mitac_nvme_micron_generic.json \
+    file://mitac_nvme_phison_generic.json \
     file://mitac_nvme_samsung_generic.json \
     file://mitac_nvme_solidigm_generic.json \
     "
@@ -18,6 +19,7 @@ do_install:append() {
     install -m 0644 -D ${UNPACKDIR}/mitac_nvme_intel_p_series.json ${D}${datadir}/${PN}/configurations/
     install -m 0644 -D ${UNPACKDIR}/mitac_nvme_kioxia_generic.json ${D}${datadir}/${PN}/configurations/
     install -m 0644 -D ${UNPACKDIR}/mitac_nvme_micron_generic.json ${D}${datadir}/${PN}/configurations/
+    install -m 0644 -D ${UNPACKDIR}/mitac_nvme_phison_generic.json ${D}${datadir}/${PN}/configurations/
     install -m 0644 -D ${UNPACKDIR}/mitac_nvme_samsung_generic.json ${D}${datadir}/${PN}/configurations/
     install -m 0644 -D ${UNPACKDIR}/mitac_nvme_solidigm_generic.json ${D}${datadir}/${PN}/configurations/
 

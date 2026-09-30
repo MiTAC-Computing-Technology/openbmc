@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vincent Yen <vincent.yen@mitaccomputing.com>
+Date: Thu, 17 Sep 2026 00:00:00 -0400
+Subject: [PATCH] Software: Version: add CPLD version purposes
+
+Add version purposes for the motherboard, switch, backplane, fan board,
+and PCIe interposer board CPLDs.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+Signed-off-by: Vincent Yen <vincent.yen@mitaccomputing.com>
+---
+ .../Software/Version.interface.yaml           | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/yaml/xyz/openbmc_project/Software/Version.interface.yaml b/yaml/xyz/openbmc_project/Software/Version.interface.yaml
+index 2bb8aab..43e7a2d 100644
+--- a/yaml/xyz/openbmc_project/Software/Version.interface.yaml
++++ b/yaml/xyz/openbmc_project/Software/Version.interface.yaml
+@@ -42,6 +42,21 @@ enumerations:
+           - name: PSU
+             description: >
+                 The version is a version for a PSU.
++          - name: MB_CPLD
++            description: >
++                The version is a version for a motherboard CPLD.
++          - name: SW_CPLD
++            description: >
++                The version is a version for a switch CPLD.
++          - name: BP_CPLD
++            description: >
++                The version is a version for a backplane board CPLD.
++          - name: FB_CPLD
++            description: >
++                The version is a version for a fan board CPLD.
++          - name: PCIB_CPLD
++            description: >
++                The version is a version for a PCIe interposer board CPLD.
+ 
+ associations:
+     - name: running
+-- 
+2.43.0

@@ -1,0 +1,185 @@
+From 97055d98c57002d9c7f77cf99694d5daff952127 Mon Sep 17 00:00:00 2001
+From: Troy Lee <troy_lee@aspeedtech.com>
+Date: Thu, 25 May 2023 15:34:35 +0800
+Subject: [PATCH 3/4] Add support of partial jpeg
+
+Partial jpeg is a standard jpeg but only include the changed blocks to
+save amount of data to be transferred.
+
+Use '-m' to assign jpeg format
+ 0: standard jpeg, 1: aspeed jpeg, 2: partial jpeg
+
+Both 0/2 can be used with TightVNC like vnc-clients.
+
+Upstream-Status: Pending
+Signed-off-by: Jammy Huang <jammy_huang@aspeedtech.com>
+Signed-off-by: Troy Lee <troy_lee@aspeedtech.com>
+---
+ ikvm_args.cpp   |  2 +-
+ ikvm_server.cpp |  9 +++++++--
+ ikvm_video.cpp  | 24 +++++++++++++++++++++---
+ ikvm_video.hpp  | 23 +++++++++++++++++++++++
+ 4 files changed, 52 insertions(+), 6 deletions(-)
+
+diff --git a/ikvm_args.cpp b/ikvm_args.cpp
+index d702c15..1dfd1e7 100644
+--- a/ikvm_args.cpp
++++ b/ikvm_args.cpp
+@@ -36,7 +36,7 @@ Args::Args(int argc, char* argv[]) :
+                 break;
+             case 'm':
+                 format = (int)strtol(optarg, nullptr, 0);
+-                if (format < 0 || format > 2)
++                if (format < 0 || format > 3)
+                     format = 0;
+                 break;
+             case 'h':
+diff --git a/ikvm_server.cpp b/ikvm_server.cpp
+index 679dd74..9e39f16 100644
+--- a/ikvm_server.cpp
++++ b/ikvm_server.cpp
+@@ -178,8 +178,13 @@ void Server::sendFrame()
+                 cl->ublen = sz_rfbFramebufferUpdateMsg;
+                 rfbSendUpdateBuf(cl);
+                 cl->tightEncoding = rfbEncodingTight;
+-                rfbSendTightHeader(cl, 0, 0, video.getWidth(),
+-                                   video.getHeight());
++                if (video.getPixelformatflags() == V4L2_PIX_FMT_FLAG_PARTIAL_JPG) {
++                    v4l2_rect r = video.getBoundingBox(i);
++
++                    rfbSendTightHeader(cl, r.left, r.top, r.width, r.height);
++                } else {
++                    rfbSendTightHeader(cl, 0, 0, video.getWidth(), video.getHeight());
++                }
+                 cl->updateBuf[cl->ublen++] = (char)(rfbTightJpeg << 4);
+                 rfbSendCompressedDataTight(cl, data, video.getFrameSize(i));
+                 if (cl->enableLastRectEncoding)
+diff --git a/ikvm_video.cpp b/ikvm_video.cpp
+index f8b2b94..44b7106 100644
+--- a/ikvm_video.cpp
++++ b/ikvm_video.cpp
+@@ -33,17 +33,21 @@ using namespace sdbusplus::xyz::openbmc_project::Common::Device::Error;
+ Video::Video(const std::string& p, Input& input, int fr, int sub, int fmt) :
+     resizeAfterOpen(false), timingsError(false), fd(-1), frameRate(fr),
+     height(600), width(800), subSampling(sub), input(input),
+-    path(p)
++    path(p), pixelformat(V4L2_PIX_FMT_JPEG), pixelformatflags(0)
+ {
+     switch (fmt)
+     {
+-        case 1:
++        case 3:
+             pixelformat = V4L2_PIX_FMT_RGB24;
+             break;
+ 
+-        case 2:
++        case 1:
+             pixelformat = V4L2_PIX_FMT_AJPG;
+             break;
++        case 2:
++            pixelformat = V4L2_PIX_FMT_JPEG;
++            pixelformatflags = V4L2_PIX_FMT_FLAG_PARTIAL_JPG;
++            break;
+         case 0:
+         default:
+             pixelformat = V4L2_PIX_FMT_JPEG;
+@@ -133,6 +137,7 @@ void Video::getFrame()
+     v4l2_buffer buf;
+     fd_set fds;
+     timeval tv;
++    v4l2_selection comp = {.type = V4L2_BUF_TYPE_VIDEO_CAPTURE, .target = V4L2_SEL_TGT_CROP_DEFAULT};
+ 
+     if (fd < 0)
+     {
+@@ -175,6 +180,18 @@ void Video::getFrame()
+                 {
+                     buffers[buf.index].payload = buf.bytesused;
+                     buffers[buf.index].sequence = buf.sequence;
++                    if (pixelformatflags == V4L2_PIX_FMT_FLAG_PARTIAL_JPG) {
++                        rc = ioctl(fd, VIDIOC_G_SELECTION, &comp);
++                        if (rc) {
++                            lg2::error("Failed to get selection box {ERROR}", "ERROR",
++                                        strerror(errno));
++                            comp.r.left = 0;
++                            comp.r.top = 0;
++                            comp.r.width = width;
++                            comp.r.height = height;
++                        }
++                        buffers[buf.index].box = comp.r;
++                    }
+                     buffersDone.push_back(buf.index);
+                 }
+                 else
+@@ -525,6 +542,7 @@ void Video::start()
+     }
+ 
+     fmt.fmt.pix.pixelformat = pixelformat;
++    fmt.fmt.pix.flags = pixelformatflags;
+     rc = ioctl(fd, VIDIOC_S_FMT, &fmt);
+     if (rc < 0)
+     {
+diff --git a/ikvm_video.hpp b/ikvm_video.hpp
+index 1b7e63f..e7d6594 100644
+--- a/ikvm_video.hpp
++++ b/ikvm_video.hpp
+@@ -6,6 +6,7 @@
+ #include <string>
+ #include <vector>
+ #include <deque>
++#include <linux/videodev2.h>
+ 
+ #ifndef V4L2_PIX_FMT_AJPG
+ #define V4L2_PIX_FMT_AJPG     v4l2_fourcc('A', 'J', 'P', 'G')
+@@ -130,6 +131,14 @@ class Video
+     {
+         return pixelformat;
+     }
++    /*
++     * @brief Gets the pixel format flags of the video frame
++     *
++     * @return Value of the pixel format flags of video frame */
++    inline uint32_t getPixelformatflags() const
++    {
++        return pixelformatflags;
++    }
+     /*
+      * @brief Gets the width of the video frame
+      *
+@@ -158,6 +167,17 @@ class Video
+         subSampling = _sub;
+     }
+ 
++    /*
++     * @brief Gets the bounding-box of the partial-jpeg
++     *
++     * @return Bounding-box of the video frame
++     */
++    inline v4l2_rect getBoundingBox(unsigned int i) const
++    {
++        return buffers[i].box;
++    }
++
++
+     /* @brief Number of bits per component of a pixel */
+     static int bitsPerSample;
+     /* @brief Number of bytes of storage for a pixel */
+@@ -188,6 +208,7 @@ class Video
+         size_t payload;
+         size_t size;
+         uint32_t sequence;
++        v4l2_rect box;
+     };
+ 
+     /*
+@@ -216,6 +237,8 @@ class Video
+ 
+     /* @brief Pixel Format  */
+     uint32_t pixelformat;
++    /* @brief Pixel Format Flags */
++    uint32_t pixelformatflags;
+ };
+ 
+ } // namespace ikvm
+-- 
+2.43.0
+

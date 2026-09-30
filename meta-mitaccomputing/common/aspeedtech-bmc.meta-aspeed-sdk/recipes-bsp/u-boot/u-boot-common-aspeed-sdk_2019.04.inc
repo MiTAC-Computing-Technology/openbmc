@@ -9,9 +9,11 @@ PE = "1"
 BRANCH = "aspeed-master-v2019.04"
 SRC_URI = "git://github.com/AspeedTech-BMC/u-boot.git;protocol=https;branch=${BRANCH}"
 
-# Tag for v00.04.23
-SRCREV = "4d144c52efddecbbf37ddd9adf93d9e4fd975561"
+# Tag for v00.04.26
+SRCREV = "4b8f18ff71ef870a9aab17bf0841d5e06c300c56"
 
+# Git fetcher unpacks to UNPACKDIR/git; point S there so do_configure can find sources.
+# (Default S=${WORKDIR}/${BP} does not match destsuffix=git/ under current OE unpack.)
 S = "${WORKDIR}/git"
 B = "${WORKDIR}/build"
 do_configure[cleandirs] = "${B}"

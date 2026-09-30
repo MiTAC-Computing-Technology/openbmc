@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spencer Tsai <spencer.tsai@mitaccomputing.com>
+Date: Thu, 3 Sep 2026 14:30:00 +0800
+Subject: [PATCH] cpu-info: use PRIx64 for uint64_t PPIN sprintf
+
+%llx matches uint64_t on arm32 (unsigned long long) but not on aarch64
+(unsigned long). Use PRIx64 so both AST2600 and AST2700 builds succeed
+under -Werror=format=.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/cpu_info.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/cpu_info.cpp b/src/cpu_info.cpp
+index e6973c3..b1c2d4e 100644
+--- a/src/cpu_info.cpp
++++ b/src/cpu_info.cpp
+@@ -1,5 +1,6 @@
+ #include "cpu_info.hpp"
+ 
++#include <cinttypes>
+ #include <linux/ioctl.h>
+ #include <linux/types.h>
+ 
+@@ -674,7 +675,7 @@ void CpuInfo::decode_PPIN(uint64_t data)
+     std::string datemonthlotstr;
+     std::string serialnumstr;
+ 
+-    sprintf(ppinstr, "0%llx", data);
++    sprintf(ppinstr, "0%" PRIx64, data);
+     decode_lotstring(ppinstr, markedlotstr);
+     sd_journal_print(LOG_INFO, "Mark Lot string # %s \n", markedlotstr.c_str());
+ 
+--
+2.34.1

@@ -1,0 +1,25 @@
+From e7c46bad1941ed75d38e69af3aef71a7e58d8afa Mon Sep 17 00:00:00 2001
+From: Jian-Ming Wang <jian.ming.wang@mitaccomputing.com>
+Date: Thu, 16 Apr 2026 08:38:01 +0000
+Subject: [PATCH 1/2] Extended to support the device type of Fan.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ schemas/global.json | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/schemas/global.json b/schemas/global.json
+index a001b26..e74546d 100644
+--- a/schemas/global.json
++++ b/schemas/global.json
+@@ -44,6 +44,7 @@
+                     "enum": [
+                         "Board",
+                         "Chassis",
++                        "Fan",
+                         "NVMe",
+                         "PowerSupply",
+                         "CPU",
+-- 
+2.43.0
+

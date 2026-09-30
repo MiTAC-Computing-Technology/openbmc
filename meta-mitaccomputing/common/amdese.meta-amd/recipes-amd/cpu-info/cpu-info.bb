@@ -9,6 +9,7 @@ SRC_URI = "git://git@github.com/AMDESE/bmc-cpuinfo.git;branch=integ_sp7;protocol
 SRCREV = "41929cf639f84703f682a9af84d1b28218908003"
 
 SRC_URI += "file://0001-cpu-info-porting-to-MiTAC-platforms-and-fix-build-er.patch \
+            file://0002-cpu-info-use-PRIx64-for-uint64_t-PPIN-sprintf.patch \
             "
 
 S = "${WORKDIR}/git"

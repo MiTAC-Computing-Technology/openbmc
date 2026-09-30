@@ -1,0 +1,104 @@
+From 2b3c4d5e6f70819293a4b5c6d7e8f9a0b1c2d3e4 Mon Sep 17 00:00:00 2001
+From: Spencer Tsai <spencer.tsai@mitaccomputing.com>
+Date: Thu, 4 Jun 2026 14:00:00 +0800
+Subject: [PATCH] Preserve RedfishMessageArgs string array elements during probe.
+
+Entity-manager's templateCharReplace() auto-coerces any purely numeric JSON
+string (e.g. "0") into a uint64_t. That is desirable for scalar D-Bus
+properties but breaks RedfishMessageArgs, which must stay a string array so
+consumers receive D-Bus `as` rather than `at`.
+
+Track the parent JSON key while recursing template substitution and skip the
+numeric from_chars coercion for elements under RedfishMessageArgs.
+
+Upstream-Status: Inappropriate [MiOBMC DigitalSensor Redfish bridge]
+---
+ src/entity_manager/utils.cpp | 35 +++++++++++++++++++++++++++--------
+ src/entity_manager/utils.hpp |  6 ++++--
+ 2 files changed, 31 insertions(+), 10 deletions(-)
+
+diff --git a/src/entity_manager/utils.cpp b/src/entity_manager/utils.cpp
+index b169bceed2..a1b2c3d4e5 100644
+--- a/src/entity_manager/utils.cpp
++++ b/src/entity_manager/utils.cpp
+@@ -109,11 +109,13 @@ bool fwVersionIsSame()
+ // with.
+ std::optional<std::string> templateCharReplace(
+     nlohmann::json::iterator& keyPair, const DBusObject& object,
+-    const size_t index, const std::optional<std::string>& replaceStr)
++    const size_t index, const std::optional<std::string>& replaceStr,
++    const std::string& parentKey)
+ {
+     for (const auto& [_, interface] : object)
+     {
+-        auto ret = templateCharReplace(keyPair, interface, index, replaceStr);
++        auto ret = templateCharReplace(keyPair, interface, index, replaceStr,
++                                       parentKey);
+         if (ret)
+         {
+             return ret;
+@@ -127,17 +129,29 @@ std::optional<std::string> templateCharReplace(
+ // ADDRESS field from a object on dbus
+ std::optional<std::string> templateCharReplace(
+     nlohmann::json::iterator& keyPair, const DBusInterface& interface,
+-    const size_t index, const std::optional<std::string>& replaceStr)
++    const size_t index, const std::optional<std::string>& replaceStr,
++    const std::string& parentKey)
+ {
+     std::optional<std::string> ret = std::nullopt;
+ 
+-    if (keyPair.value().type() == nlohmann::json::value_t::object ||
+-        keyPair.value().type() == nlohmann::json::value_t::array)
++    if (keyPair.value().type() == nlohmann::json::value_t::object)
+     {
+         for (auto nextLayer = keyPair.value().begin();
+              nextLayer != keyPair.value().end(); nextLayer++)
+         {
+-            templateCharReplace(nextLayer, interface, index, replaceStr);
++            templateCharReplace(nextLayer, interface, index, replaceStr,
++                                nextLayer.key());
++        }
++        return ret;
++    }
++
++    if (keyPair.value().type() == nlohmann::json::value_t::array)
++    {
++        for (auto nextLayer = keyPair.value().begin();
++             nextLayer != keyPair.value().end(); nextLayer++)
++        {
++            templateCharReplace(nextLayer, interface, index, replaceStr,
++                                parentKey);
+         }
+         return ret;
+     }
+@@ -247,6 +261,11 @@ std::optional<std::string> templateCharReplace(
+         return ret;
+     }
+ 
++    if (parentKey == "RedfishMessageArgs")
++    {
++        return ret;
++    }
++
+     std::string_view strView = *strPtr;
+     int base = 10;
+     if (boost::starts_with(strView, "0x"))
+diff --git a/src/entity_manager/utils.hpp b/src/entity_manager/utils.hpp
+index ac72c80f36..b2c3d4e5f6 100644
+--- a/src/entity_manager/utils.hpp
++++ b/src/entity_manager/utils.hpp
+@@ -41,10 +41,12 @@ bool fwVersionIsSame();
+ 
+ std::optional<std::string> templateCharReplace(
+     nlohmann::json::iterator& keyPair, const DBusObject& object, size_t index,
+-    const std::optional<std::string>& replaceStr = std::nullopt);
++    const std::optional<std::string>& replaceStr = std::nullopt,
++    const std::string& parentKey = "");
+ 
+ std::optional<std::string> templateCharReplace(
+     nlohmann::json::iterator& keyPair, const DBusInterface& interface,
+-    size_t index, const std::optional<std::string>& replaceStr = std::nullopt);
++    size_t index, const std::optional<std::string>& replaceStr = std::nullopt,
++    const std::string& parentKey = "");
+ 
+ } // namespace em_utils

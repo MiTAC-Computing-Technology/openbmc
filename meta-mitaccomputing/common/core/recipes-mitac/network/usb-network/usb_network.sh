@@ -6,6 +6,24 @@ USB_VHUB=/sys/bus/platform/devices/1e6a0000.usb-vhub
 NAME=netusb
 SLEEP_TIME=1
 
+get_gadget_iface() {
+    local max_retries=5
+    while [ $max_retries -gt 0 ]; do
+        for p in /sys/class/net/usb*; do
+            [ -e "$p" ] || continue
+
+            if [ -L "$p/device" ] && readlink "$p/device" | grep -q "gadget"; then
+                echo $(basename "$p")
+                return
+            fi
+        done
+
+        sleep 1
+        max_retries=$((max_retries - 1))
+    done
+    echo "usb0"
+}
+
 free_port() {
     local p
     for p in /sys/class/udc/*; do
@@ -48,7 +66,8 @@ usb_net_create()
 
 if test "$1" = stop; then
     echo "Stop usb network"
-    ifconfig usb0 down
+    TARGET_IFACE=$(get_gadget_iface)
+    ifconfig $TARGET_IFACE down
     rm -f $GADGET_BASE/$NAME/configs/c.1/ncm.$NAME
     rmdir $GADGET_BASE/$NAME/configs/c.1/strings/0x409
     rmdir $GADGET_BASE/$NAME/configs/c.1
@@ -60,5 +79,7 @@ else
     usb_net_create
     echo "Sleep $SLEEP_TIME sec to wait usb net stable."
     sleep $SLEEP_TIME
-    ifconfig usb0 $IP
+    TARGET_IFACE=$(get_gadget_iface)
+    echo "Gadget interface is $TARGET_IFACE, assigning IP..."
+    ifconfig $TARGET_IFACE $IP
 fi

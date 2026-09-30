@@ -1,0 +1,78 @@
+From d5f45abaed8cd4a62b2b4022a7677be02696a6b6 Mon Sep 17 00:00:00 2001
+From: "fredy.chen" <fredy.chen@mitaccomputing.com>
+Date: Mon, 27 Jul 2026 23:06:20 -0400
+Subject: [PATCH] Add support for retrieving System UUID from SMBIOS service
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/appcommands.cpp | 46 ++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 43 insertions(+), 3 deletions(-)
+
+diff --git a/src/appcommands.cpp b/src/appcommands.cpp
+index 513fae9..e574ace 100644
+--- a/src/appcommands.cpp
++++ b/src/appcommands.cpp
+@@ -285,10 +285,16 @@ ipmi::RspType<std::array<uint8_t, 16>> ipmiAppGetSystemGuid(
+ {
+     static constexpr auto uuidInterface = "xyz.openbmc_project.Common.UUID";
+     static constexpr auto uuidProperty = "UUID";
+-    // Get the Inventory object implementing BMC interface
++    static constexpr auto uuidService = "xyz.openbmc_project.Smbios.MDR_V2";
++
++    // Get the object implementing the UUID interface from the SMBIOS service.
+     ipmi::DbusObjectInfo objectInfo{};
+-    boost::system::error_code ec =
+-        ipmi::getDbusObject(ctx, uuidInterface, objectInfo);
++    boost::system::error_code ec;
++    GetSubTreeType uuidObjects = ctx->bus->yield_method_call<GetSubTreeType>(
++        ctx->yield, ec, ObjectMapper::default_service,
++        "/xyz/openbmc_project/object_mapper",
++        "xyz.openbmc_project.ObjectMapper", "GetSubTree", "/", 0,
++        std::array<const char*, 1>{uuidInterface});
+ 
+     if (ec.value())
+     {
+@@ -298,6 +304,40 @@ ipmi::RspType<std::array<uint8_t, 16>> ipmiAppGetSystemGuid(
+         return ipmi::responseUnspecifiedError();
+     }
+ 
++    if (uuidObjects.empty())
++    {
++        lg2::error("System UUID interface not found, interface: {INTERFACE}",
++                   "INTERFACE", uuidInterface);
++        return ipmi::responseUnspecifiedError();
++    }
++
++    bool foundUuidService = false;
++    for (const auto& [path, serviceInterfaces] : uuidObjects)
++    {
++        for (const auto& serviceInterface : serviceInterfaces)
++        {
++            if (serviceInterface.first == uuidService)
++            {
++                objectInfo = {path, serviceInterface.first};
++                foundUuidService = true;
++                break;
++            }
++        }
++
++        if (foundUuidService)
++        {
++            break;
++        }
++    }
++
++    if (!foundUuidService)
++    {
++        lg2::error("System UUID service not found, interface: {INTERFACE}, "
++                   "service: {SERVICE}",
++                   "INTERFACE", uuidInterface, "SERVICE", uuidService);
++        return ipmi::responseUnspecifiedError();
++    }
++
+     // Read UUID property value from bmcObject
+     // UUID is in RFC4122 format Ex: 61a39523-78f2-11e5-9862-e6402cfc3223
+     std::string rfc4122Uuid{};
+-- 
+2.34.1
+

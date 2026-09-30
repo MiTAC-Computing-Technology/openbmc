@@ -1,0 +1,575 @@
+From 6deaa5c226649875cced91e8bda073b153cea2c0 Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Mon, 29 Jun 2026 01:08:35 +0000
+Subject: [PATCH] Add redfish event log
+
+- Firmware update supports the following Redfish MessageId
+  - OpenBMC.0.5.FirmwareUpdateStarted
+  - OpenBMC.0.5.FirmwareUpdateCompleted
+  - OpenBMC.0.5.FirmwareUpdateFailed
+  - OpenBMC.0.5.BMCBootReason
+
+- Since the BMC update will trigger a reboot, the following procedures need to be performed.
+  - phosphor-software-manager
+    - /var/log/bmcFirmwareUpdateInprogress Record the image version to be updated by the firmware.
+  - BMC shutdown -> update:
+    - Read the firmware update image version from /var/log/bmcFirmwareUpdateInprogress to trigger event log, then delete the file.
+    - Record the image version and update result to /var/log/bmcFirmwareUpdateFinish
+  - BMC reboot
+  - phosphor-software-manager
+    - If /var/log/bmcFirmwareUpdateFinish is present, record any pending Redfish event logs, then delete the file.
+
+- Test:
+  Execute BMC/BIOS firmware update, expecting Redfish event log to be generated
+  curl -k -u root:0penBmc https://$BMC/redfish/v1/Systems/system/LogServices/EventLog/Entries
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ bmc/activation.cpp     | 57 ++++++++++++++++++++++++++++++++++++++++++
+ bmc/activation.hpp     |  5 ++++
+ bmc/image_verify.cpp   | 39 +++++++++++++++++++++++++++++
+ bmc/image_verify.hpp   |  2 ++
+ bmc/item_updater.cpp   | 38 ++++++++++++++++++++++++++++
+ bmc/item_updater.hpp   |  3 +++
+ bmc/redfish_log.hpp    | 41 ++++++++++++++++++++++++++++++
+ bmc/update_manager.cpp | 34 +++++++++++++++++++++++++
+ 8 files changed, 219 insertions(+)
+ create mode 100644 bmc/redfish_log.hpp
+
+diff --git a/bmc/activation.cpp b/bmc/activation.cpp
+index a09b580..8139cb0 100644
+--- a/bmc/activation.cpp
++++ b/bmc/activation.cpp
+@@ -3,6 +3,7 @@
+ #include "images.hpp"
+ #include "item_updater.hpp"
+ #include "msl_verify.hpp"
++#include "redfish_log.hpp"
+ #include "serialize.hpp"
+ 
+ #include <boost/asio/io_context.hpp>
+@@ -14,6 +15,8 @@
+ #include <xyz/openbmc_project/Common/error.hpp>
+ #include <xyz/openbmc_project/Software/Version/error.hpp>
+ 
++#include <fstream>
++
+ #ifdef WANT_SIGNATURE_VERIFY
+ #include "image_verify.hpp"
+ #endif
+@@ -80,6 +83,52 @@ void Activation::unsubscribeFromSystemdSignals()
+     return;
+ }
+ 
++void Activation::redfishLog(const std::string& id, const std::string& message,
++                            const bool isBmcReboot)
++{
++    auto version = parent.versions.find(versionId)->second->version();
++    auto purpose = parent.versions.find(versionId)->second->purpose();
++
++    std::string target;
++    if (purpose == VersionPurpose::BMC)
++    {
++        target = "BMC";
++    }
++    else if (purpose == VersionPurpose::Host)
++    {
++        target = "BIOS";
++    }
++    else
++    {
++        target = "Unknown";
++    }
++
++    if (isBmcReboot)
++    {
++        constexpr auto bmcFirmwareUpdateInprogress =
++            "/var/log/bmcFirmwareUpdateInprogress";
++        std::ofstream versionFile(bmcFirmwareUpdateInprogress,
++                                  std::ios::out | std::ios::trunc);
++        if (!versionFile)
++        {
++            error("Failed to open {PATH}", "PATH", bmcFirmwareUpdateInprogress);
++        }
++        else
++        {
++            versionFile << version;
++            if (!versionFile)
++            {
++                error("Failed to write {PATH}", "PATH",
++                      bmcFirmwareUpdateInprogress);
++            }
++        }
++        version = phosphor::software::manager::Version::getBMCVersion(
++            OS_RELEASE_FILE);
++    }
++
++    redfish::firmwareUpdate(id, target, version, message);
++}
++
+ auto Activation::activation(Activations value) -> Activations
+ {
+     if ((value != softwareServer::Activation::Activations::Active) &&
+@@ -110,6 +159,7 @@ auto Activation::activation(Activations value) -> Activations
+ 
+         if (!minimum_ship_level::verify(versionStr))
+         {
++            redfishLog("FirmwareUpdateFailed", "Version too low to update");
+             return softwareServer::Activation::activation(
+                 softwareServer::Activation::Activations::Failed);
+         }
+@@ -136,6 +186,8 @@ auto Activation::activation(Activations value) -> Activations
+             // Set initial progress
+             activationProgress->progress(20);
+ 
++            redfishLog("FirmwareUpdateStarted", "Start the firmware update");
++
+             // Initiate image writing to flash
+             flashWriteHost();
+ 
+@@ -212,6 +264,8 @@ void Activation::onFlashWriteSuccess()
+     if (Activation::checkApplyTimeImmediate())
+     {
+         info("Image Active and ApplyTime is immediate; rebooting BMC.");
++        redfishLog("BMCBootReason", "firmware update", true);
++        redfishLog("FirmwareUpdateStarted", "Start the firmware update");
+         Activation::rebootBmc();
+     }
+     else
+@@ -444,6 +498,8 @@ void Activation::onStateChangesBios(sdbusplus::message_t& msg)
+             activation(softwareServer::Activation::Activations::Active);
+ 
+             info("Bios upgrade completed successfully.");
++            redfishLog("FirmwareUpdateCompleted", "Firmware update successful");
++
+             parent.biosVersion->version(
+                 parent.versions.find(versionId)->second->version());
+ 
+@@ -458,6 +514,7 @@ void Activation::onStateChangesBios(sdbusplus::message_t& msg)
+             activation(softwareServer::Activation::Activations::Failed);
+ 
+             error("Bios upgrade failed.");
++            redfishLog("FirmwareUpdateFailed", "Firmware update failed");
+         }
+     }
+ 
+diff --git a/bmc/activation.hpp b/bmc/activation.hpp
+index 47da9b5..4d5befc 100644
+--- a/bmc/activation.hpp
++++ b/bmc/activation.hpp
+@@ -309,6 +309,11 @@ class Activation : public ActivationInherit, public Flash
+      **/
+     void rebootBmc();
+ 
++  private:
++    void redfishLog(const std::string& id, const std::string& message,
++                    bool isBmcReboot = false);
++
++  public:
+     /** @brief Persistent sdbusplus DBus bus connection */
+     sdbusplus::bus_t& bus;
+ 
+diff --git a/bmc/image_verify.cpp b/bmc/image_verify.cpp
+index 7b3a369..e06c684 100644
+--- a/bmc/image_verify.cpp
++++ b/bmc/image_verify.cpp
+@@ -3,6 +3,7 @@
+ #include "image_verify.hpp"
+ 
+ #include "images.hpp"
++#include "redfish_log.hpp"
+ #include "utils.hpp"
+ #include "version.hpp"
+ 
+@@ -96,6 +97,28 @@ inline KeyHashPathPair Signature::getKeyHashFileNames(const Key_t& key) const
+     return std::make_pair(std::move(hashpath), std::move(keyPath));
+ }
+ 
++void Signature::redfishErrorLog(const std::string& message) const
++{
++    fs::path file(imageDirPath / MANIFEST_FILE_NAME);
++    auto version = Version::getValue(file, "version");
++
++    std::string target;
++    if (purpose == VersionPurpose::BMC)
++    {
++        target = "BMC";
++    }
++    else if (purpose == VersionPurpose::Host)
++    {
++        target = "BIOS";
++    }
++    else
++    {
++        target = "Unknown";
++    }
++
++    redfish::firmwareUpdateFailed(target, version, message);
++}
++
+ bool Signature::verifyFullImage()
+ {
+     bool ret = true;
+@@ -150,6 +173,7 @@ bool Signature::verifyPurposeBIOS()
+         if (!systemLevelVerify())
+         {
+             error("System level Signature Validation failed");
++            redfishErrorLog("System-level signature validation failed");
+             return false;
+         }
+ 
+@@ -165,6 +189,7 @@ bool Signature::verifyPurposeBIOS()
+                                     imageUpdateList, biosFilesFound);
+         if (biosFilesFound && !valid)
+         {
++            redfishErrorLog("Image-level signature validation failed");
+             return false;
+         }
+ 
+@@ -177,6 +202,7 @@ bool Signature::verifyPurposeBIOS()
+                                         imageUpdateList, biosFilesFound);
+             if (biosFilesFound && !valid)
+             {
++                redfishErrorLog("Image-level signature validation failed");
+                 return false;
+             }
+         }
+@@ -184,12 +210,14 @@ bool Signature::verifyPurposeBIOS()
+         if (!verifyFullImage())
+         {
+             error("Image full file Signature Validation failed");
++            redfishErrorLog("Full Image-level signature validation failed");
+             return false;
+         }
+ 
+         if (!biosFilesFound)
+         {
+             error("Unable to find files to verify");
++            redfishErrorLog("No images found to verify");
+             return false;
+         }
+ 
+@@ -200,11 +228,13 @@ bool Signature::verifyPurposeBIOS()
+     }
+     catch (const InternalFailure& e)
+     {
++        redfishErrorLog("Internal failure during signature validation");
+         return false;
+     }
+     catch (const std::exception& e)
+     {
+         error("Error during processing: {ERROR}", "ERROR", e);
++        redfishErrorLog("Signature validation exception");
+         return false;
+     }
+ 
+@@ -221,6 +251,7 @@ bool Signature::verifyPurposeBMC()
+         if (!systemLevelVerify())
+         {
+             error("System level Signature Validation failed");
++            redfishErrorLog("System-level signature validation failed");
+             return false;
+         }
+ 
+@@ -236,6 +267,7 @@ bool Signature::verifyPurposeBMC()
+                                     imageUpdateList, bmcFilesFound);
+         if (bmcFilesFound && !valid)
+         {
++            redfishErrorLog("Image-level signature validation failed");
+             return false;
+         }
+ 
+@@ -248,6 +280,7 @@ bool Signature::verifyPurposeBMC()
+                                         imageUpdateList, bmcFilesFound);
+             if (bmcFilesFound && !valid)
+             {
++                redfishErrorLog("Image-level signature validation failed");
+                 return false;
+             }
+         }
+@@ -277,6 +310,8 @@ bool Signature::verifyPurposeBMC()
+                 {
+                     error("Image file Signature Validation failed on {IMAGE}",
+                           "IMAGE", optionalImage);
++                    redfishErrorLog(
++                        "Optional Image-level signature validation failed");
+                     return false;
+                 }
+             }
+@@ -285,12 +320,14 @@ bool Signature::verifyPurposeBMC()
+         if (!verifyFullImage())
+         {
+             error("Image full file Signature Validation failed");
++            redfishErrorLog("Full Image-level signature validation failed");
+             return false;
+         }
+ 
+         if (!bmcFilesFound && !optionalFilesFound)
+         {
+             error("Unable to find files to verify");
++            redfishErrorLog("No images found to verify");
+             return false;
+         }
+ 
+@@ -302,11 +339,13 @@ bool Signature::verifyPurposeBMC()
+     }
+     catch (const InternalFailure& e)
+     {
++        redfishErrorLog("Internal failure during signature validation");
+         return false;
+     }
+     catch (const std::exception& e)
+     {
+         error("Error during processing: {ERROR}", "ERROR", e);
++        redfishErrorLog("Signature validation exception");
+         return false;
+     }
+ 
+diff --git a/bmc/image_verify.hpp b/bmc/image_verify.hpp
+index 2b950ef..c7506c9 100644
+--- a/bmc/image_verify.hpp
++++ b/bmc/image_verify.hpp
+@@ -208,6 +208,8 @@ class Signature
+      */
+     bool verifyFullImage();
+ 
++    void redfishErrorLog(const std::string& message) const;
++
+     /** @brief Directory where software images are placed*/
+     fs::path imageDirPath;
+ 
+diff --git a/bmc/item_updater.cpp b/bmc/item_updater.cpp
+index 77c9a70..046a114 100644
+--- a/bmc/item_updater.cpp
++++ b/bmc/item_updater.cpp
+@@ -3,6 +3,7 @@
+ #include "item_updater.hpp"
+ 
+ #include "images.hpp"
++#include "redfish_log.hpp"
+ #include "serialize.hpp"
+ #include "version.hpp"
+ #include "xyz/openbmc_project/Software/ExtendedVersion/server.hpp"
+@@ -484,6 +485,8 @@ void ItemUpdater::processBMCImage()
+     }
+ 
+     mirrorUbootToAlt();
++
++    updateBmcPendingRedfishLog();
+     return;
+ }
+ 
+@@ -924,6 +927,41 @@ void ItemUpdater::mirrorUbootToAlt()
+     helper.mirrorAlt();
+ }
+ 
++void ItemUpdater::updateBmcPendingRedfishLog()
++{
++    static constexpr auto updateFinishFile = "/var/log/bmcFirmwareUpdateFinish";
++
++    if (!fs::exists(updateFinishFile))
++    {
++        return;
++    }
++
++    std::ifstream updateFinish(updateFinishFile);
++    std::string version;
++    std::string result;
++
++    std::getline(updateFinish, version, ',');
++    std::getline(updateFinish, result);
++
++    if (result == "Firmware update successful")
++    {
++        redfish::firmwareUpdate("FirmwareUpdateCompleted", "BMC", version,
++                                result);
++    }
++    else
++    {
++        redfish::firmwareUpdate("FirmwareUpdateFailed", "BMC", version, result);
++    }
++
++    std::error_code ec;
++    fs::remove(updateFinishFile, ec);
++    if (ec)
++    {
++        error("Failed to remove {PATH}: {ERROR}", "PATH", updateFinishFile,
++              "ERROR", ec.message());
++    }
++}
++
+ bool ItemUpdater::checkImage(const std::string& filePath,
+                              const std::vector<std::string>& imageList)
+ {
+diff --git a/bmc/item_updater.hpp b/bmc/item_updater.hpp
+index 6274abe..eeb66d1 100644
+--- a/bmc/item_updater.hpp
++++ b/bmc/item_updater.hpp
+@@ -360,6 +360,9 @@ class ItemUpdater : public ItemUpdaterInherit
+      */
+     void mirrorUbootToAlt();
+ 
++    /** @brief Logs pending BMC firmware update result for Redfish Event log. */
++    void updateBmcPendingRedfishLog();
++
+     /** @brief Check the required image files
+      *
+      * @param[in] filePath - BMC tarball file path
+diff --git a/bmc/redfish_log.hpp b/bmc/redfish_log.hpp
+new file mode 100644
+index 0000000..4b34d22
+--- /dev/null
++++ b/bmc/redfish_log.hpp
+@@ -0,0 +1,41 @@
++#pragma once
++
++#include <phosphor-logging/lg2.hpp>
++
++#include <format>
++#include <string>
++
++namespace phosphor::software::redfish
++{
++
++inline void firmwareUpdate(const std::string& id, const std::string& target,
++                           const std::string& version,
++                           const std::string& message)
++{
++    std::string msgId = "OpenBMC.0.5." + id;
++    std::string msgArgs;
++
++    if (id == "FirmwareUpdateFailed")
++    {
++        msgArgs = std::format("{},{},{}", target, version, message);
++    }
++    else if (id == "FirmwareUpdateStarted" || id == "FirmwareUpdateCompleted")
++    {
++        msgArgs = std::format("{},{}", target, version);
++    }
++    else if (id == "BMCBootReason")
++    {
++        msgArgs = std::format("{},{}", version, message);
++    }
++    lg2::info("{LOG_MSG}", "LOG_MSG", message, "REDFISH_MESSAGE_ID", msgId,
++              "REDFISH_MESSAGE_ARGS", msgArgs);
++}
++
++inline void firmwareUpdateFailed(const std::string& target,
++                                 const std::string& version,
++                                 const std::string& message)
++{
++    firmwareUpdate("FirmwareUpdateFailed", target, version, message);
++}
++
++} // namespace phosphor::software::redfish
+diff --git a/bmc/update_manager.cpp b/bmc/update_manager.cpp
+index 922f2bc..a08550a 100644
+--- a/bmc/update_manager.cpp
++++ b/bmc/update_manager.cpp
+@@ -1,6 +1,7 @@
+ #include "update_manager.hpp"
+ 
+ #include "item_updater.hpp"
++#include "redfish_log.hpp"
+ #include "software_utils.hpp"
+ #include "version.hpp"
+ 
+@@ -58,6 +59,24 @@ auto Manager::processImage(sdbusplus::message::unix_fd image,
+     -> sdbusplus::async::task<>
+ {
+     debug("Processing image {FD}", "FD", image.fd);
++
++    std::string target;
++    if (itemUpdater.type == ItemUpdaterIntf::UpdaterType::BMC)
++    {
++        info("This StartUpdate is from BMC updater");
++        target = "BMC";
++    }
++    else if (itemUpdater.type == ItemUpdaterIntf::UpdaterType::BIOS)
++    {
++        info("This StartUpdate is from BIOS updater");
++        target = "BIOS";
++    }
++    else
++    {
++        info("This StartUpdate is from ALL updater");
++        target = "Unknown";
++    }
++
+     fs::path tmpDirPath(std::string{IMG_UPLOAD_DIR});
+     tmpDirPath /= "imageXXXXXX";
+     auto tmpDir = tmpDirPath.string();
+@@ -67,6 +86,8 @@ auto Manager::processImage(sdbusplus::message::unix_fd image,
+         error("Error ({ERRNO}) occurred during mkdtemp", "ERRNO", errno);
+         processImageFailed(image, id);
+         report<SoftwareErrors::InternalFailure>(InternalFail::FAIL("mkdtemp"));
++        redfish::firmwareUpdateFailed(target, "(Undetected)",
++                                      "Failed to copy tarball");
+         co_return;
+     }
+ 
+@@ -81,6 +102,8 @@ auto Manager::processImage(sdbusplus::message::unix_fd image,
+         processImageFailed(image, id);
+         report<SoftwareErrors::UnTarFailure>(
+             UnTarFail::PATH(tmpDirPath.c_str()));
++        redfish::firmwareUpdateFailed(target, "(Undetected)",
++                                      "Failed to extract tarball");
+         co_return;
+     }
+ 
+@@ -95,6 +118,8 @@ auto Manager::processImage(sdbusplus::message::unix_fd image,
+         processImageFailed(image, id);
+         report<SoftwareErrors::ManifestFileFailure>(
+             ManifestFail::PATH(manifestPath.string().c_str()));
++        redfish::firmwareUpdateFailed(target, "(Undetected)",
++                                      "Failed to detect the image version");
+         co_return;
+     }
+ 
+@@ -109,6 +134,8 @@ auto Manager::processImage(sdbusplus::message::unix_fd image,
+         report<SoftwareErrors::ImageFailure>(
+             ImageFail::FAIL("Failed to read machine name"),
+             ImageFail::PATH(path));
++        redfish::firmwareUpdateFailed(
++            target, version, "Failed to detect the running machine name");
+         co_return;
+     }
+ 
+@@ -126,6 +153,8 @@ auto Manager::processImage(sdbusplus::message::unix_fd image,
+             report<SoftwareErrors::ImageFailure>(
+                 ImageFail::FAIL("Machine name does not match"),
+                 ImageFail::PATH(manifestPath.string().c_str()));
++            redfish::firmwareUpdateFailed(target, version,
++                                          "Image machine name mismatch");
+             co_return;
+         }
+     }
+@@ -145,6 +174,8 @@ auto Manager::processImage(sdbusplus::message::unix_fd image,
+         processImageFailed(image, id);
+         report<SoftwareErrors::ManifestFileFailure>(
+             ManifestFail::PATH(manifestPath.string().c_str()));
++        redfish::firmwareUpdateFailed(target, version,
++                                      "Failed to detect the image purpose");
+         co_return;
+     }
+     auto convertedPurpose =
+@@ -165,6 +196,8 @@ auto Manager::processImage(sdbusplus::message::unix_fd image,
+         report<SoftwareErrors::ImageFailure>(
+             ImageFail::FAIL("Purpose is not supported"),
+             ImageFail::PATH(manifestPath.string().c_str()));
++        redfish::firmwareUpdateFailed(target, version,
++                                      "Image purpose mismatch");
+         co_return;
+     }
+ 
+@@ -195,6 +228,7 @@ auto Manager::processImage(sdbusplus::message::unix_fd image,
+         report<SoftwareErrors::ImageFailure>(
+             ImageFail::FAIL("Image is invalid"),
+             ImageFail::PATH(filePath.c_str()));
++        redfish::firmwareUpdateFailed(target, version, "The image is invalid");
+         co_return;
+     }
+     if (applyTime == ApplyTimeIntf::RequestedApplyTimes::Immediate ||
+-- 
+2.43.0
+

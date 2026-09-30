@@ -133,7 +133,7 @@
         status = "disabled";
 };
 
-&pcie_bridge {
+&pcie0 {
 	status = "disabled";
 };
 

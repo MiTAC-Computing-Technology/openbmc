@@ -24,6 +24,9 @@ init_default_config() {
 # Disable BMC Kernel Boot WDT.
 disable_os_wdt
 
+# Drop ICMP timestamp request/reply packets.
+setup_icmp_timestamp_firewall_rules
+
 # Get profile based on FRU information.
 find_profile PROFILE_PATH
 echo $PROFILE_PATH

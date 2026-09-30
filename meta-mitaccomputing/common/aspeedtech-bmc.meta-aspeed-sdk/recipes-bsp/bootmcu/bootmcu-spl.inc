@@ -8,8 +8,7 @@ DEPENDS += "${@bb.utils.contains('MACHINE_FEATURES', 'ast-secure', 'aspeed-secur
 
 inherit deploy cml1 python3native otptool
 
-#RISCV_PREBUILT_TOOLCHAIN = "${STAGING_DIR_NATIVE}${datadir}/ast2700-riscv-linux-gnu/bin/riscv32-unknown-linux-gnu-"
-RISCV_PREBUILT_TOOLCHAIN = "${STAGING_DIR_NATIVE}${datadir}/ast2700-riscv-linux-gnu/ast2700-riscv-linux-gnu/bin/riscv32-unknown-linux-gnu-"
+RISCV_PREBUILT_TOOLCHAIN = "${STAGING_DIR_NATIVE}${datadir}/ast2700-riscv-linux-gnu/bin/riscv32-unknown-linux-gnu-"
 
 EXTRA_OEMAKE = 'CROSS_COMPILE=${RISCV_PREBUILT_TOOLCHAIN} CC="${RISCV_PREBUILT_TOOLCHAIN}gcc" V=1'
 EXTRA_OEMAKE += 'HOSTCC="${BUILD_CC} ${BUILD_CFLAGS} ${BUILD_LDFLAGS}"'
@@ -117,17 +116,18 @@ do_add_pubkey_to_spl_dtb() {
 addtask add_pubkey_to_spl_dtb before do_deploy do_create_fmc_image after do_compile
 
 # Use fmc-imgtool to create fmc image since A1
-# export CRYPTOGRAPHY_OPENSSL_NO_LEGACY variable to fix the following errors.
-# OpenSSL 3.0 legacy provider failed to load
-# https://github.com/pyca/cryptography/issues/10598
 do_create_fmc_image() {
-    export CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1
+    export OPENSSL_MODULES="${STAGING_LIBDIR_NATIVE}/ossl-modules"
 
     local ecc_key=""
     local ecc_key_index=""
     local lms_key=""
     local lms_key_index=""
     local sign_args=""
+
+    if [ "${FMC_IMAGE_ENABLE}" != "1" ]; then
+        return
+    fi
 
     if [ -f "${FMC_ECC_KEY}" ]; then
         ecc_key="--ecc-key ${FMC_ECC_KEY}"
@@ -155,7 +155,7 @@ do_create_fmc_image() {
         --verbose \
         --version 2 \
         --input ${B}/spl/u-boot-spl.bin \
-        --output ${B}/${BOOTMCU_FW_BINARY} \
+        --output ${B}/${BOOTMCU_FMC_BINARY} \
         --prebuilt-dir ${DEPLOY_DIR_IMAGE}/ \
         ${sign_args}
 }
@@ -163,7 +163,7 @@ do_create_fmc_image() {
 addtask create_fmc_image before do_deploy after do_compile
 
 do_create_fmc_image[depends] += " \
-    fmc-images:do_deploy \
+    bmc-pb:do_deploy \
     "
 
 do_deploy() {
@@ -179,10 +179,8 @@ do_deploy() {
     # To reduce the risk of unexpected run-time errors, verification should be added.
 
     # spl fmc since AST2700 A1
-    install -m 644 ${BOOTMCU_FW_BINARY} ${DEPLOYDIR}
-    install -m 644 ${BOOTMCU_FW_BINARY} ${DEPLOYDIR}/${BOOTMCU_FW_BINARY}-${sub_ver}
+    install -m 644 ${BOOTMCU_FMC_BINARY} ${DEPLOYDIR}
+    install -m 644 ${BOOTMCU_FMC_BINARY} ${DEPLOYDIR}/${BOOTMCU_FMC_BINARY}-${sub_ver}
 }
 
 addtask deploy before do_build after do_compile
-
-ALLOW_EMPTY:${PN} = "1"

@@ -74,6 +74,8 @@
 	phy-handle = <&ethphy0>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_rgmii1_default>;
+	tx-internal-delay-ps = <720>;
+	rx-internal-delay-ps = <450>;
 };
 
 &mac2 {
@@ -152,7 +154,7 @@
         status = "disabled";
 };
 
-&pcie_bridge {
+&pcie0 {
 	status = "disabled";
 };
 

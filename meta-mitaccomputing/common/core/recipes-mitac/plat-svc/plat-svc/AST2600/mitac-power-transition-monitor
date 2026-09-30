@@ -1,16 +1,31 @@
 #!/bin/bash -e
 
 GetPwrState() {
-    PwrState=`busctl get-property xyz.openbmc_project.State.Host /xyz/openbmc_project/state/host0 xyz.openbmc_project.State.Host CurrentHostState | cut -d " " -f 2`
+    PwrState=`busctl get-property xyz.openbmc_project.State.Host /xyz/openbmc_project/state/chassis0 xyz.openbmc_project.State.Chassis CurrentPowerState | cut -d " " -f 2`
     #echo $PwrState
 
-    if [[ $PwrState == *"Running"* ]]; then
+    if [[ $PwrState == *"PowerState.On"* ]]; then
         CurrPwrState="on"
-    else
+    elif [[ $PwrState == *"PowerState.Off"* ]]; then
         CurrPwrState="off"
+    else
+        CurrPwrState="Unknown"
     fi
-    # echo "CurrPwrState Host Power State: $CurrPwrState"
-    # echo "LastPwrState Host Power State: $LastPwrState"
+    #echo "Host Power State: $CurrPwrState"
+}
+
+TurnOnPowerLED() {
+    busctl set-property \
+        xyz.openbmc_project.LED.GroupManager \
+        /xyz/openbmc_project/led/groups/power_on \
+        xyz.openbmc_project.Led.Group Asserted b true
+}
+
+TurnOffPowerLED() {
+    busctl set-property \
+        xyz.openbmc_project.LED.GroupManager \
+        /xyz/openbmc_project/led/groups/power_on \
+        xyz.openbmc_project.Led.Group Asserted b false
 }
 
 source /tmp/mainboard_env.sh
@@ -26,43 +41,58 @@ LastPwrState=$CurrPwrState
 
 # Execute the corresponding action immediately based on the current state at startup
 if [[ $CurrPwrState == "on" ]]; then
-    echo "Initial state is ON. Syncing power-on actions..."
-    action_power_transition_on
+    TurnOnPowerLED
+    if declare -F "action_power_transition_on" >/dev/null; then
+        echo "Initial state is ON. Syncing power-on actions..."
+        action_power_transition_on
+    fi
 else
-    echo "Initial state is OFF. Syncing power-off actions..."
-    action_power_transition_off
+    TurnOffPowerLED
+    if declare -F "action_power_transition_off" >/dev/null; then
+        echo "Initial state is OFF. Syncing power-off actions..."
+        action_power_transition_off
+    fi
 fi
 
 while [ true ]
 do
     GetPwrState
     if [[ $CurrPwrState != $LastPwrState ]]; then
-        if [[ $LastPwrState == "off" ]]; then
-                echo "Call action for transition to ON"
-		set +e
+        if [[ $CurrPwrState == "on" ]]; then
+            echo "Call action for transition to ON"
+            set +e
+            TurnOnPowerLED
+            if declare -F "action_power_transition_on" >/dev/null; then
                 action_power_transition_on
-		set -e
-        fi
-
-        if [[ $LastPwrState == "on" ]]; then
-                echo "Call action for transition to OFF"
-		set +e
+            fi
+            set -e
+        elif [[ $CurrPwrState == "off" ]]; then
+            echo "Call action for transition to OFF"
+            set +e
+            TurnOffPowerLED
+            if declare -F "action_power_transition_off" >/dev/null; then
                 action_power_transition_off
-		set -e
-	else
-		if [[ $CurrPwrState == "off" ]]; then
-			echo "Regular task while powered off"
-			set +e
-			action_power_status_off
-			set -e
-		else
-			echo "Regular task while powered on"
-			set +e
-			action_power_status_on
-			set -e
-		fi
+            fi
+            set -e
+        else
+            echo "Unknown power state"
+        fi
+    else
+        if [[ $CurrPwrState == "on" ]]; then
+            set +e
+            if declare -F "action_power_status_on" >/dev/null; then
+                action_power_status_on
+            fi
+            set -e
+        elif [[ $CurrPwrState == "off" ]]; then
+            set +e
+            if declare -F "action_power_status_off" >/dev/null; then
+                action_power_status_off
+            fi
+            set -e
         fi
     fi
+
     LastPwrState=$CurrPwrState
     sleep 5
 done

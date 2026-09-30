@@ -205,7 +205,7 @@
       "PowerState": "On",
       "Name": "CPU 0 TEMP_C",
       "EntityId": 3,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Thresholds": [
         {
           "Direction": "greater than",
@@ -242,7 +242,7 @@
       "PowerState": "On",
       "Name": "CPU 1 TEMP_C",
       "EntityId": 3,
-      "EntityInstance": 1,
+      "EntityInstance": 2,
       "Thresholds": [
         {
           "Direction": "greater than",
@@ -275,7 +275,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 8,
       "Name": "Baseboard P12V VOLT_V",
       "PowerState": "On",
@@ -322,7 +322,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 9,
       "Name": "Baseboard P12V_AUX VOLT_V",
       "ScaleFactor": 0.1362,
@@ -368,7 +368,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 10,
       "Name": "Baseboard P5V VOLT_V",
       "PowerState": "On",
@@ -415,7 +415,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 12,
       "Name": "Baseboard P3V3_AUX VOLT_V",
       "ScaleFactor": 0.5,
@@ -461,7 +461,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 13,
       "Name": "Baseboard P1V8_BMC_AUX VOLT_V",
       "ScaleFactor": 0.90497,
@@ -799,6 +799,6 @@
   },
   "xyz.openbmc_project.Inventory.Decorator.Ipmi": {
     "EntityId": 7,
-    "EntityInstance": 0
+    "EntityInstance": 1
   }
 }

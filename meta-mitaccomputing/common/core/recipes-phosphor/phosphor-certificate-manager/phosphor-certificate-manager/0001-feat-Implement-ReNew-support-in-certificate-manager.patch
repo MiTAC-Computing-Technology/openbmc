@@ -1,0 +1,206 @@
+From 67851678fc8b800eaba26746453e1206088c0e76 Mon Sep 17 00:00:00 2001
+From: Allen Lin <mingchih.lin@mitaccomputing.com>
+Date: Tue, 14 Jul 2026 06:45:41 +0000
+Subject: [PATCH] [feat] Implement ReNew support in certificate manager
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+
+Summary:
+ - Added ReNew method to Cert interface in phosphor-dbus-interfaces.
+ - Implemented ReNew function in phosphor-certificate-manager.
+ - Private key and CSR are now saved under /etc/ssl/certs/https to allow CA verification against the key.
+ - Function returns CSR string for user to submit to CA for signing.
+
+Reference:
+ - MBMCS-126 (https://jira.navman.co.nz/jira/browse/MBMCS-126)
+---
+ certs_manager.cpp | 110 ++++++++++++++++++++++++++++++++++++++++++++--
+ certs_manager.hpp |  23 +++++++++-
+ 2 files changed, 129 insertions(+), 4 deletions(-)
+
+diff --git a/certs_manager.cpp b/certs_manager.cpp
+index ea2b55d..f96fdaa 100644
+--- a/certs_manager.cpp
++++ b/certs_manager.cpp
+@@ -131,9 +131,9 @@ std::vector<std::string> splitCertificates(const std::string& sourceFilePath)
+ Manager::Manager(sdbusplus::bus_t& bus, sdeventplus::Event& event,
+                  const char* path, CertificateType type,
+                  const std::string& unit, const std::string& installPath) :
+-    internal::ManagerInterface(bus, path), bus(bus), event(event),
+-    objectPath(path), certType(type), unitToRestart(std::move(unit)),
+-    certInstallPath(std::move(installPath)),
++    internal::ManagerInterface(bus, path),
++    bus(bus), event(event), objectPath(path), certType(type),
++    unitToRestart(std::move(unit)), certInstallPath(std::move(installPath)),
+     certParentInstallPath(fs::path(certInstallPath).parent_path())
+ {
+     try
+@@ -433,6 +433,110 @@ void Manager::replaceCertificate(Certificate* const certificate,
+     }
+ }
+ 
++std::string Manager::reNew(const std::string certFilePath)
++{
++    std::string currCertFilePath = certFilePath;
++    namespace fs = std::filesystem;
++
++    if (certType == CertificateType::authority)
++    {
++        lg2::error("The type of authority does not support ReNew");
++        return {};
++    }
++    else
++    {
++        if (currCertFilePath.empty())
++        {
++            if (certType == CertificateType::server ||
++                certType == CertificateType::client)
++            {
++                currCertFilePath = certInstallPath;
++            }
++            else
++            {
++                lg2::error("The certificate type does not support ReNew");
++                return {};
++            }
++        }
++    }
++
++    try
++    {
++        lg2::info("Renewing SSL certificate...");
++
++        internal::X509Ptr cert = loadCert(currCertFilePath);
++        std::string certDir = fs::path(currCertFilePath).parent_path().string();
++
++        BIOMemPtr keyBio(BIO_new_file(currCertFilePath.c_str(), "rb"),
++                         ::BIO_free);
++        if (!keyBio)
++        {
++            lg2::error("Unable to open private key file");
++            return {};
++        }
++        EVPPkeyPtr priKey(
++            PEM_read_bio_PrivateKey(keyBio.get(), nullptr, nullptr, nullptr),
++            ::EVP_PKEY_free);
++        if (!priKey)
++        {
++            lg2::error("Unable to load private key");
++            return {};
++        }
++
++        lg2::info("Saving private key to PATH:{PATH}", "PATH",
++                  std::string(certDir + "/privkey.pem").c_str());
++        {
++            BIOMemPtr outBio(
++                BIO_new_file(std::string(certDir + "/privkey.pem").c_str(),
++                             "w"),
++                ::BIO_free);
++            if (!outBio ||
++                !PEM_write_bio_PrivateKey(outBio.get(), priKey.get(), nullptr,
++                                          nullptr, 0, nullptr, nullptr))
++            {
++                lg2::error("Unable to save private key");
++                return {};
++            }
++        }
++
++        X509ReqPtr x509Req(
++            X509_to_X509_REQ(cert.get(), priKey.get(), EVP_sha256()),
++            ::X509_REQ_free);
++        if (!x509Req)
++        {
++            lg2::error("X509_to_X509_REQ conversion error");
++            return {};
++        }
++
++        lg2::info("Saving CSR to PATH:{PATH}", "PATH",
++                  std::string(certDir + "/domain.csr").c_str());
++        {
++            BIOMemPtr csrBio(
++                BIO_new_file(std::string(certDir + "/domain.csr").c_str(), "w"),
++                ::BIO_free);
++            if (!csrBio || !PEM_write_bio_X509_REQ(csrBio.get(), x509Req.get()))
++            {
++                lg2::error("Unable to save CSR");
++                return {};
++            }
++        }
++
++        BIOMemPtr mem(BIO_new(BIO_s_mem()), ::BIO_free);
++        PEM_write_bio_X509_REQ(mem.get(), x509Req.get());
++        BUF_MEM* bptr = nullptr;
++        BIO_get_mem_ptr(mem.get(), &bptr);
++        std::string csrStr(bptr->data, bptr->length);
++
++        return csrStr;
++    }
++    catch (const std::exception& e)
++    {
++        lg2::error("ReNew failed: exception caught - ERROR:{ERROR}", "ERROR",
++                   e.what());
++    }
++    return {};
++}
++
+ std::string Manager::generateCSR(
+     std::vector<std::string> alternativeNames, std::string challengePassword,
+     std::string city, std::string commonName, std::string contactPerson,
+diff --git a/certs_manager.hpp b/certs_manager.hpp
+index 722f07f..35516fb 100644
+--- a/certs_manager.hpp
++++ b/certs_manager.hpp
+@@ -16,6 +16,7 @@
+ #include <xyz/openbmc_project/Certs/InstallAll/server.hpp>
+ #include <xyz/openbmc_project/Certs/ReplaceAll/server.hpp>
+ #include <xyz/openbmc_project/Collection/DeleteAll/server.hpp>
++#include <xyz/openbmc_project/Certs/ReNew/server.hpp>
+ 
+ #include <cstdint>
+ #include <filesystem>
+@@ -23,6 +24,18 @@
+ #include <string>
+ #include <vector>
+ 
++// OpenSSL smart pointer typedefs
++// BIO
++using BIOMemPtr = std::unique_ptr<BIO, decltype(&::BIO_free)>;
++// EVP_PKEY
++using EVPPkeyPtr = std::unique_ptr<EVP_PKEY, decltype(&::EVP_PKEY_free)>;
++// X509
++using X509Ptr = std::unique_ptr<X509, decltype(&::X509_free)>;
++// X509_REQ (CSR)
++using X509ReqPtr = std::unique_ptr<X509_REQ, decltype(&::X509_REQ_free)>;
++// BUF_MEM (BIO buffer)
++using BufMemPtr = std::unique_ptr<BUF_MEM, decltype(&::BUF_MEM_free)>;
++
+ namespace phosphor::certs
+ {
+ 
+@@ -33,7 +46,8 @@ using ManagerInterface = sdbusplus::server::object_t<
+     sdbusplus::xyz::openbmc_project::Certs::CSR::server::Create,
+     sdbusplus::xyz::openbmc_project::Collection::server::DeleteAll,
+     sdbusplus::xyz::openbmc_project::Certs::server::InstallAll,
+-    sdbusplus::xyz::openbmc_project::Certs::server::ReplaceAll>;
++    sdbusplus::xyz::openbmc_project::Certs::server::ReplaceAll,
++    sdbusplus::xyz::openbmc_project::Certs::server::ReNew>;
+ }
+ 
+ class Manager : public internal::ManagerInterface
+@@ -113,6 +127,13 @@ class Manager : public internal::ManagerInterface
+     void replaceCertificate(Certificate* const certificate,
+                             const std::string& filePath);
+ 
++    /** @brief Implementation for ReNew
++     *  Renew the certificate using existing key pair.
++     *  @param[in] filePath - Certificate file path.
++     *  @return The PEM-encoded CSR content generated from the certificate.
++     */
++    std::string reNew(const std::string filePath) override;
++
+     /** @brief Generate Private key and CSR file
+      *  Generates the Private key file and CSR file based on the input
+      *  parameters. Validation of the parameters is callers responsibility.
+-- 
+2.43.0
+

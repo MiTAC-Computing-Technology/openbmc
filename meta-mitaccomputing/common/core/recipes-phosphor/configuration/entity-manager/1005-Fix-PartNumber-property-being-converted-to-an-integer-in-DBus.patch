@@ -1,0 +1,47 @@
+From a7e231f9815269934b16d5735c19aafb5d82404f Mon Sep 17 00:00:00 2001
+From: "justin.kuo" <justin.kuo@mitaccomputing.com>
+Date: Tue, 28 Jul 2026 09:34:56 +0000
+Subject: [PATCH] Fix PartNumber property being converted to an integer in
+ DBus.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/entity_manager/utils.cpp | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/src/entity_manager/utils.cpp b/src/entity_manager/utils.cpp
+index af46c43..d4b1ee8 100644
+--- a/src/entity_manager/utils.cpp
++++ b/src/entity_manager/utils.cpp
+@@ -24,6 +24,14 @@ static std::unique_ptr<sdbusplus::bus::match_t> powerMatch = nullptr;
+ 
+ constexpr const char* templateChar = "$";
+ 
++// Properties that are not converted to integer.
++// The configured literal strings such as
++//     "PartNumber": "336310000105"
++// must remain strings.
++constexpr std::array<std::string_view, 1> stringProperties = {
++    "PartNumber",
++};
++
+ bool isPowerOn()
+ {
+     if (!powerMatch)
+@@ -269,6 +277,13 @@ std::optional<std::string> templateCharReplace(
+         return ret;
+     }
+ 
++    if (std::find(stringProperties.begin(), stringProperties.end(),
++                  parentKey) != stringProperties.end())
++    {
++        // This property doesn't need to be converted to an integer.
++        return ret;
++    }
++
+     std::string_view strView = *strPtr;
+     int base = 10;
+     if (boost::starts_with(strView, "0x"))
+-- 
+2.45.2
+

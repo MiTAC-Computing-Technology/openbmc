@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spencer Tsai <spencer.tsai@mitaccomputing.com>
+Date: Thu, 6 Aug 2026 15:30:00 +0800
+Subject: [PATCH] Update boost process includes for Boost 1.88
+
+Boost 1.86+ moved the Process V1 API under boost/process/v1/.
+Update includes and namespaces so phosphor-user-manager builds
+against Boost 1.88.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ user_mgr.hpp | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/user_mgr.hpp b/user_mgr.hpp
+index 1111111..2222222 100644
+--- a/user_mgr.hpp
++++ b/user_mgr.hpp
+@@ -17,8 +17,8 @@
+ #include "json_serializer.hpp"
+ #include "users.hpp"
+ 
+-#include <boost/process/child.hpp>
+-#include <boost/process/io.hpp>
++#include <boost/process/v1/child.hpp>
++#include <boost/process/v1/io.hpp>
+ #include <phosphor-logging/elog-errors.hpp>
+ #include <phosphor-logging/elog.hpp>
+ #include <phosphor-logging/lg2.hpp>
+@@ -93,9 +93,9 @@ bool removeStringFromCSV(std::string& csvStr, const std::string& delStr);
+ std::vector<std::string> executeCmd(const char* path, ArgTypes&&... tArgs)
+ {
+     std::vector<std::string> stdOutput;
+-    boost::process::ipstream stdOutStream;
+-    boost::process::child execProg(path, const_cast<char*>(tArgs)...,
+-                                   boost::process::std_out > stdOutStream);
++    boost::process::v1::ipstream stdOutStream;
++    boost::process::v1::child execProg(path, const_cast<char*>(tArgs)...,
++                                       boost::process::v1::std_out > stdOutStream);
+     std::string stdOutLine;
+ 
+     while (stdOutStream && std::getline(stdOutStream, stdOutLine) &&
+-- 
+2.45.2

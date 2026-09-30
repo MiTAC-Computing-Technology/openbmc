@@ -1,28 +1,28 @@
-From b0864532c62ea0a3a5280efcaabb4d4b21e0c1a3 Mon Sep 17 00:00:00 2001
+From cb0da5b8cf52e58f67aac3bbbc04f813d34e4e53 Mon Sep 17 00:00:00 2001
 From: Jian-Ming Wang <jian.ming.wang@mitaccomputing.com>
 Date: Wed, 5 Nov 2025 06:25:19 +0000
 Subject: [PATCH 2/2] Added base board init file for AST2700.
 
 Upstream-Status: Inappropriate [No upstream maintenance]
 ---
- board/aspeed/evb_ast2700/evb_ast2700.c | 72 ++++++++++++++++++++++++++
- 1 file changed, 72 insertions(+)
+ board/aspeed/evb_ast2700/evb_ast2700.c | 73 ++++++++++++++++++++++++++
+ 1 file changed, 73 insertions(+)
 
 diff --git a/board/aspeed/evb_ast2700/evb_ast2700.c b/board/aspeed/evb_ast2700/evb_ast2700.c
-index b34aa6e168..0947381d88 100644
+index b34aa6e1..27764dcc 100644
 --- a/board/aspeed/evb_ast2700/evb_ast2700.c
 +++ b/board/aspeed/evb_ast2700/evb_ast2700.c
-@@ -2,4 +2,76 @@
- /*
+@@ -3,3 +3,76 @@
   * Copyright (C) ASPEED Technology Inc.
   */
+ 
 +#include <common.h>
 +#include <env.h>
 +#include <asm/arch/platform.h>
 +#include <asm/io.h>
 +#define DEFAULT_SGPIO_BYTES 10
 +#define MAX_SGPIO_BYTES 16
- 
++
 +static void __maybe_unused disable_abr_wdt(void)
 +{
 +	printf("TODO: %s for AST2700.\n", __func__);
@@ -90,5 +90,5 @@ index b34aa6e168..0947381d88 100644
 +	return;
 +}
 -- 
-2.45.2
+2.34.1
 

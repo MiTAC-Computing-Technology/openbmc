@@ -17,10 +17,22 @@ ME_CMD_RESET="1 6 0 0x2 0"
 SPI_DEV="spi1.0"
 SPI_PATH="/sys/bus/spi/drivers/spi-nor"
 
+SOFTWARE_SERVICE="xyz.openbmc_project.Software.Manager"
+SOFTWARE_ID=$(basename "$IMAGE_DIR")
+SOFTWARE_PATH="/xyz/openbmc_project/software/$SOFTWARE_ID"
+APPLY_OPTIONS_INTERFACE="xyz.openbmc_project.Software.ApplyOptions"
+CLEAR_CONFIG_PROPERTY="ClearConfig"
+
+BIOS_CONFIG_SERVICE="xyz.openbmc_project.BIOSConfigManager"
+BIOS_CONFIG_PATH="/xyz/openbmc_project/bios_config/manager"
+BIOS_CONFIG_INTERFACE="xyz.openbmc_project.BIOSConfig.Manager"
+RESET_BIOS_SETTINGS_PROPERTY="ResetBIOSSettings"
+FACTORY_DEFAULTS_FLAG="xyz.openbmc_project.BIOSConfig.Manager.ResetFlag.FactoryDefaults"
+
 remove_resource()
 {
     echo "Remove resource in $IMAGE_DIR"
-    rm -rf $IMAGE_DIR
+    rm -rf $IMAGE_FILE
 }
 
 set_gpio_to_bmc()
@@ -35,6 +47,33 @@ set_gpio_to_pch()
     echo "switch bios GPIO to pch"
     gpioset $GPIO=0
     return 0
+}
+
+restore_bios_factory_defaults()
+{
+    if CLEAR_CONFIG=$(busctl get-property \
+        "$SOFTWARE_SERVICE" "$SOFTWARE_PATH" \
+        "$APPLY_OPTIONS_INTERFACE" "$CLEAR_CONFIG_PROPERTY"); then
+        case "$CLEAR_CONFIG" in
+            "b true")
+                echo "Restore BIOS settings to factory defaults"
+                if ! busctl set-property \
+                    "$BIOS_CONFIG_SERVICE" "$BIOS_CONFIG_PATH" \
+                    "$BIOS_CONFIG_INTERFACE" "$RESET_BIOS_SETTINGS_PROPERTY" \
+                    s "$FACTORY_DEFAULTS_FLAG"; then
+                    echo "Warning: Failed to request BIOS factory defaults" >&2
+                fi
+                ;;
+            "b false")
+                echo "Preserve existing BIOS settings"
+                ;;
+            *)
+                echo "Warning: Unexpected ClearConfig value: $CLEAR_CONFIG" >&2
+                ;;
+        esac
+    else
+        echo "Warning: Failed to read ClearConfig from $SOFTWARE_PATH" >&2
+    fi
 }
 
 echo "Bios upgrade started at $(date)"
@@ -126,6 +165,9 @@ echo "Reset ME to boot from new bios"
 # shellcheck disable=SC2086
 #busctl call "$IPMB_OBJ" "$IPMB_PATH" "$IPMB_INTF" $IPMB_CALL $ME_CMD_RESET
 #sleep 10
+
+# Restore the BIOS settings to factory defaults when requested for this update.
+restore_bios_factory_defaults
 
 #Power on server
 echo "Power on server"

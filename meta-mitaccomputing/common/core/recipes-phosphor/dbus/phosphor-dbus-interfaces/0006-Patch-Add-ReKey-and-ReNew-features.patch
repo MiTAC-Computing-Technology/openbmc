@@ -1,0 +1,80 @@
+From 112cc79664505ab58c707a1d8d29c95c5f27ccf7 Mon Sep 17 00:00:00 2001
+From: Allen Lin <mingchih.lin@mitaccomputing.com>
+Date: Tue, 30 Jun 2026 07:56:57 +0000
+Subject: [PATCH] [Patch] Add ReKey and ReNew features
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ gen/xyz/openbmc_project/Certs/meson.build     | 46 +++++++++++++++++++
+ .../Certs/ReKey.interface.yaml                | 18 ++++++++
+ .../Certs/ReNew.interface.yaml                | 18 ++++++++
+ 3 files changed, 82 insertions(+)
+ create mode 100644 yaml/xyz/openbmc_project/Certs/ReKey.interface.yaml
+ create mode 100644 yaml/xyz/openbmc_project/Certs/ReNew.interface.yaml
+
+diff --git a/gen/xyz/openbmc_project/Certs/meson.build b/gen/xyz/openbmc_project/Certs/meson.build
+index 983de5c..7a8d2f1 100644
+--- a/gen/xyz/openbmc_project/Certs/meson.build
++++ b/gen/xyz/openbmc_project/Certs/meson.build
+@@ -7,6 +7,7 @@ subdir('Install')
+ subdir('InstallAll')
+ subdir('Replace')
+ subdir('ReplaceAll')
++subdir('ReNew')
+ 
+ sdbusplus_current_path = 'xyz/openbmc_project/Certs'
+ 
+@@ -216,3 +217,23 @@ generated_markdown += custom_target(
+     build_by_default: should_generate_markdown,
+ )
+ 
++generated_markdown += custom_target(
++    'xyz/openbmc_project/Certs/ReNew__markdown'.underscorify(),
++    input: ['../../../../yaml/xyz/openbmc_project/Certs/ReNew.interface.yaml'],
++    output: ['ReNew.md'],
++    depend_files: sdbusplusplus_depfiles,
++    command: [
++        sdbuspp_gen_meson_prog,
++        '--command',
++        'markdown',
++        '--output',
++        meson.current_build_dir(),
++        '--tool',
++        sdbusplusplus_prog,
++        '--directory',
++        meson.current_source_dir() / '../../../../yaml',
++        'xyz/openbmc_project/Certs/ReNew',
++    ],
++    install: should_generate_markdown,
++    install_dir: [inst_markdown_dir / sdbusplus_current_path],
++    build_by_default: should_generate_markdown,
++)
+diff --git a/yaml/xyz/openbmc_project/Certs/ReNew.interface.yaml b/yaml/xyz/openbmc_project/Certs/ReNew.interface.yaml
+new file mode 100644
+index 0000000..f5c2d4e
+--- /dev/null
++++ b/yaml/xyz/openbmc_project/Certs/ReNew.interface.yaml
+@@ -0,0 +1,20 @@
++description: >
++    Certificate interface to renew existing certificate.
++methods:
++    - name: ReNew
++      description: >
++          Convert the existing certificate (/etc/ssl/certs/https/server.pem)
++          into a new CSR using the existing private key
++          (/etc/ssl/certs/https/.rsaprivkey.pem). Return the CSR content.
++      parameters:
++          - name: Path
++            type: string
++            description: >
++                Path of the existing certificate file (PEM format).
++      returns:
++          - name: CSR
++            type: string
++            description: >
++                The PEM-encoded CSR content generated from the certificate.
++      errors:
++          - xyz.openbmc_project.Common.Error.InternalFailure
++          - xyz.openbmc_project.Certs.Error.InvalidCertificate
+-- 
+2.45.2

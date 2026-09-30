@@ -3,7 +3,7 @@
 #include "ast2600-u-boot.dtsi"
 
 / {
-	model = "AST2600 E7142 DCSCM";
+	model = "AST2600 DCSCM";
 	compatible = "aspeed,ast2600-evb", "aspeed,ast2600";
 
 	memory {
@@ -68,6 +68,8 @@
 	phy-handle = <&ethphy0>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_rgmii1_default>;
+	tx-internal-delay-ps = <720>;
+	rx-internal-delay-ps = <450>;
 };
 
 &mac3 {
@@ -203,7 +205,7 @@
 	status = "okay";
 };
 
-&pcie_bridge {
+&pcie0 {
 	status = "okay";
 };
 

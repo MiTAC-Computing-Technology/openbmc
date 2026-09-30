@@ -1,0 +1,12 @@
+{
+  "config": [
+  ],
+  "threshold": [
+    {
+      "criticalHigh": 75,
+      "criticalLow": 0,
+      "maxValue": 127,
+      "minValue": -127
+    }
+  ]
+}

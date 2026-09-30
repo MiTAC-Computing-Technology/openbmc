@@ -1,0 +1,87 @@
+From 770c7fe69859630e03e3dc68975b61d4ffc9fef4 Mon Sep 17 00:00:00 2001
+From: "justin.kuo" <justin.kuo@mitaccomputing.com>
+Date: Wed, 1 Jul 2026 09:00:31 +0000
+Subject: [PATCH] Only one firmware update task shall be allowed at a time.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ bmc/activation.cpp | 36 ++++++++++++++++++++++++++++++++++++
+ bmc/activation.hpp |  8 ++++++++
+ 2 files changed, 44 insertions(+)
+
+diff --git a/bmc/activation.cpp b/bmc/activation.cpp
+index 8139cb0..498bae2 100644
+--- a/bmc/activation.cpp
++++ b/bmc/activation.cpp
+@@ -170,6 +170,14 @@ auto Activation::activation(Activations value) -> Activations
+                 std::make_unique<ActivationProgress>(bus, path);
+         }
+ 
++        if (hasFirmwareUpdateInProgress())
++        {
++            redfishLog("FirmwareUpdateFailed",
++                       "A firmware update is in progress");
++            return softwareServer::Activation::activation(
++                softwareServer::Activation::Activations::Failed);
++        }
++
+         if (!activationBlocksTransition)
+         {
+             activationBlocksTransition =
+@@ -541,6 +549,34 @@ void Activation::rebootBmc()
+     }
+ }
+ 
++bool Activation::hasFirmwareUpdateInProgress()
++{
++    std::vector<std::string> paths;
++    auto method = this->bus.new_method_call(MAPPER_BUSNAME, MAPPER_PATH,
++                                            MAPPER_BUSNAME, "GetSubTreePaths");
++    method.append(SOFTWARE_OBJPATH);
++    method.append(0);
++    method.append(std::vector<std::string>(
++        {"xyz.openbmc_project.Software.ActivationBlocksTransition"}));
++
++    try
++    {
++        auto reply = bus.call(method);
++        reply.read(paths);
++
++        for (const auto& path : paths)
++        {
++            info("{PATH} firmware update is in progress", "PATH", path);
++        }
++    }
++    catch (const sdbusplus::exception_t& e)
++    {
++        error("Error in mapper GetSubTreePaths: {ERROR}", "ERROR", e);
++        return false;
++    }
++    return !paths.empty();
++}
++
+ } // namespace updater
+ } // namespace software
+ } // namespace phosphor
+diff --git a/bmc/activation.hpp b/bmc/activation.hpp
+index 4d5befc..fd93236 100644
+--- a/bmc/activation.hpp
++++ b/bmc/activation.hpp
+@@ -313,6 +313,14 @@ class Activation : public ActivationInherit, public Flash
+     void redfishLog(const std::string& id, const std::string& message,
+                     bool isBmcReboot = false);
+ 
++    /**
++     * @brief Checks if there is any firmware update currently in progress.
++     *
++     * @return false if no updates are in progress or if an error occurs.
++     *         true if one or more firmware updates are in progress.
++     **/
++    bool hasFirmwareUpdateInProgress();
++
+   public:
+     /** @brief Persistent sdbusplus DBus bus connection */
+     sdbusplus::bus_t& bus;
+-- 
+2.45.2
+

@@ -2,7 +2,7 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/${PN}:"
 
 SRC_URI:append = " \
   file://aspeed-bmc-mitac-base.dts \
-  file://aspeed-bmc-mitac-capri2.dts \
+  file://aspeed-bmc-mitac-capri_v2.dts \
   "
 
 do_patch:append() {

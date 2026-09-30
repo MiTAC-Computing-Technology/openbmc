@@ -1,0 +1,17 @@
+[Unit]
+Description=Sync BMC time to UBB satellite BMC (Redfish)
+# Intentionally NOT ordered on time-sync.target: the UBB has no RTC (it boots at
+# 1970), so push the RTC-backed BMC clock as early as possible. If NTP later
+# steps the BMC clock, the ubb-timesync.timer re-push corrects the UBB within
+# one interval. Gating on NTP here would only delay setting the UBB clock.
+Wants=network-online.target
+After=network-online.target usb_network.service
+# eth-ubb is created by usb_network.service + the 99-ubb-name udev rule.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/ubb-timesync/ubb-timesync.sh
+SyslogIdentifier=ubb-timesync
+
+[Install]
+WantedBy=multi-user.target

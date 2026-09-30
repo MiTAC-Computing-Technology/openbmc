@@ -1,0 +1,9 @@
+[Match]
+Name=eth-ubb
+
+[Address]
+Address=192.168.31.2/24
+
+[Network]
+LinkLocalAddressing=ipv6
+IPv6AcceptRA=no

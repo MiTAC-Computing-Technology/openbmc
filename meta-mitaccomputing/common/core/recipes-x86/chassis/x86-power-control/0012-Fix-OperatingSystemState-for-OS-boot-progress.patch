@@ -1,0 +1,38 @@
+From 3b3662c2125d8e5de03398f5d9dc6a69158e329b Mon Sep 17 00:00:00 2001
+From: Allen Kang <allen.kang@mitaccomputing.com>
+Date: Tue, 18 Aug 2026 10:00:00 -0400
+Subject: [PATCH] Fix OperatingSystemState for OS boot progress
+
+BootProgress can be updated by the BIOS through IPMI, independently of
+the POST_COMPLETE GPIO.  OSStart and OSRunning were not handled when
+translating BootProgress to OperatingSystemState.  Consequently, a
+preceding PCIInit event left OperatingSystemState at Inactive even after
+BootProgress reached OSRunning.
+
+Keep the OS in Standby while it starts, and move it to BootComplete once
+OSRunning is reported.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/power_control.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+index 1be9e89..30733b4 100644
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -331,6 +331,12 @@ static int handleBootProgressStageChange(const BootProgressStages progress)
+             case BootProgressStages::SystemSetup:
+                 setOperatingSystemState(OperatingSystemOSStatus::Standby);
+                 break;
++            case BootProgressStages::OSStart:
++                setOperatingSystemState(OperatingSystemOSStatus::Standby);
++                break;
++            case BootProgressStages::OSRunning:
++                setOperatingSystemState(OperatingSystemOSStatus::BootComplete);
++                break;
+             default:
+                 lg2::info(
+                     "Host{HOST}: \"{PROGRESS}\" doesn't impact OperatingSystemOSStatus.",
+-- 
+2.45.2

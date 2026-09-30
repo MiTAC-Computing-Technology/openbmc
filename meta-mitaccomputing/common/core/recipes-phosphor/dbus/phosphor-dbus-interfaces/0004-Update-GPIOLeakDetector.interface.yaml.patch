@@ -1,0 +1,45 @@
+From 3d1445910e697bd4e3e1918bac690e68156f54ea Mon Sep 17 00:00:00 2001
+From: Jian-Ming Wang <jian.ming.wang@mitaccomputing.com>
+Date: Thu, 11 Jun 2026 08:21:24 +0000
+Subject: [PATCH 1/1] Update GPIOLeakDetector.interface.yaml
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ .../GPIOLeakDetector.interface.yaml           | 24 +++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/yaml/xyz/openbmc_project/Configuration/GPIOLeakDetector.interface.yaml b/yaml/xyz/openbmc_project/Configuration/GPIOLeakDetector.interface.yaml
+index 0c71b98..4949b3b 100644
+--- a/yaml/xyz/openbmc_project/Configuration/GPIOLeakDetector.interface.yaml
++++ b/yaml/xyz/openbmc_project/Configuration/GPIOLeakDetector.interface.yaml
+@@ -41,3 +41,27 @@ properties:
+           attributes such as physical placement of detectors.
+       flags:
+           - readonly
++    - name: Detection
++      type: string
++      description: >
++          Either Polling GPIO or Eventing based on IRQ.
++      flags:
++          - readonly
++    - name: LocationCode
++      type: string
++      description: >
++          Location of the sensor.
++      flags:
++          - readonly
++    - name: ReactionType
++      type: string
++      description: >
++          Either None, ForceOff or GracefulShutdown
++      flags:
++          - readonly
++    - name: LED
++      type: string
++      description: >
++          Logical LED Name.
++      flags:
++          - readonly
+-- 
+2.43.0
+

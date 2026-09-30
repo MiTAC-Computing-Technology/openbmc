@@ -1,0 +1,350 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright 2024 MiTAC-Computing Corp.
+
+/dts-v1/;
+
+#include "aspeed-g6.dtsi"
+#include <dt-bindings/gpio/aspeed-gpio.h>
+
+/ {
+	model = "MiTAC C810Z5";
+	#include "aspeed-bmc-mitac-2600-reserved-memory.dtsi"
+
+        gpio-keys {
+                compatible = "gpio-keys";
+
+		#include "aspeed-bmc-mitac-common-buttons.dtsi"
+        };
+
+        iio-hwmon {
+                compatible = "iio-hwmon";
+                io-channels = <&adc0 0>, <&adc0 1>, <&adc0 2>, <&adc0 3>,
+                        <&adc0 4>, <&adc0 5>, <&adc0 6>, <&adc0 7>,
+                        <&adc1 0>, <&adc1 1>, <&adc1 2>, <&adc1 3>,
+                        <&adc1 4>, <&adc1 5>, <&adc1 6>, <&adc1 7>;
+        };
+};
+
+&mdio0 {
+	status = "okay";
+
+	ethphy0: ethernet-phy@0 {
+		compatible = "ethernet-phy-ieee802.3-c22";
+		reg = <0>;
+	};
+};
+
+&mac0 {
+        status = "okay";
+
+        phy-mode = "rgmii-rxid";
+        phy-handle = <&ethphy0>;
+
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_rgmii1_default>;
+};
+
+&mac3 {
+        status = "okay";
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_rmii4_default>;
+        clock-names = "MACCLK", "RCLK";
+        use-ncsi;
+};
+
+&rtc {
+	status = "okay";
+};
+
+&fmc {
+	status = "okay";
+	flash@0 {
+		status = "okay";
+		m25p,fast-read;
+		label = "bmc";
+		spi-rx-bus-width = <4>;
+		spi-max-frequency = <50000000>;
+#include "MiOBMC-flash-layout-64.dtsi"
+	};
+};
+
+&spi1 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_spi1_default>;
+
+	flash@0 {
+		status = "okay";
+		m25p,fast-read;
+		label = "pnor";
+		spi-rx-bus-width = <1>;
+		spi-max-frequency = <50000000>;
+	};
+};
+
+&uart3 {
+        status = "okay";
+};
+
+&uart4 {
+        status = "okay";
+};
+
+&uart5 {
+	// Workaround for A0
+	compatible = "snps,dw-apb-uart";
+};
+
+&uart_routing {
+        status = "okay";
+};
+
+&lpc_snoop {
+	status = "okay";
+	snoop-ports = <0x80>, <0x81>;
+};
+
+&lpc_ctrl {
+	status = "okay";
+};
+
+/*
+&lpc_pcc {
+        port-addr = <0x80>;
+        dma-mode;
+	// It is required to be 4 bytes mode when A2600-15 is activated.
+        A2600-15;
+        memory-region = <&pcc_memory>;
+        rec-mode = <0x1>;
+        port-addr-hbits-select = <0x1>;
+        port-addr-xbits = <0x3>;
+
+        status = "okay";
+};
+*/
+
+&fsim0 {
+	status = "okay";
+};
+
+&ehci1 {
+	status = "okay";
+};
+
+&uhci {
+	status = "okay";
+};
+
+&sdc {
+	status = "okay";
+};
+
+&vhub {
+	status = "okay";
+	pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_usb2ad_default>;
+};
+
+&video {
+	status = "okay";
+	memory-region = <&video_engine_memory>;
+};
+
+&kcs1 {
+        kcs-io-addr = <0xca0>;
+	kcs-channel = <1>;
+        status = "okay";
+};
+
+&kcs2 {
+        kcs-io-addr = <0xca8>;
+	kcs-channel = <2>;
+        status = "okay";
+};
+
+&kcs3 {
+        kcs-io-addr = <0xca2>;
+	kcs-channel = <3>;
+        status = "okay";
+};
+
+&wdt1 {
+        status = "okay";
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_wdtrst1_default>;
+        aspeed,reset-type = "soc";
+        aspeed,external-signal;
+        aspeed,ext-push-pull;
+        aspeed,ext-active-high;
+        aspeed,ext-pulse-duration = <256>;
+};
+
+/*
+&wdt2 {
+        status = "okay";
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_wdtrst2_default>;
+        aspeed,reset-type = "system";
+};
+*/
+
+&mbox {
+        status = "okay";
+};
+
+/*
+&espi {
+        status = "okay";
+        perif-dma-mode;
+        oob-dma-mode;
+        flash-dma-mode;
+};
+*/
+
+&i2c1 {
+	status = "okay";    
+};
+&i2c2 {
+        status = "okay";
+};
+
+&i2c3 {
+        status = "okay";
+};
+&i2c4 {
+        status = "okay";
+};
+&i2c5 {
+        status = "okay";
+};
+&i2c6 {
+        status = "okay";
+};
+&i2c7 {
+        status = "okay";
+};
+&i2c8 {
+        status = "okay";
+};
+&i2c9 {
+        status = "okay";
+};
+&i2c10 {
+        status = "okay";
+		// MB FRU for C2810Z5 MPH
+		eeprom@50 {
+			compatible = "atmel,24c256";
+			reg = <0x50>;
+		};
+};
+&i2c11 {
+        status = "okay";
+};
+/* Used as SGPIO
+&i2c12 {
+	status = "okay";
+};
+&i2c13 {
+	status = "okay";
+};
+*/
+&i2c14 {
+        status = "okay";
+		// DC-SCM FRU on C2810Z5 DCSCM
+		eeprom@50 {
+			compatible = "st,24c64";
+			reg = <0x50>;
+		};
+};
+&i2c15 {
+        status = "okay";
+};
+
+/*
+&i3c0 {
+        status = "okay";
+};
+*/
+#include <dt-bindings/i3c/i3c.h>
+
+&i3c1 {
+	bus-context = /bits/ 8 <I3C_BUS_CONTEXT_JESD403>;
+        status = "okay";
+};
+
+&adc0 {
+        status = "okay";
+        pinctrl-0 = <&pinctrl_adc0_default &pinctrl_adc1_default
+                        &pinctrl_adc2_default &pinctrl_adc3_default
+                        &pinctrl_adc4_default &pinctrl_adc5_default
+                        &pinctrl_adc6_default &pinctrl_adc7_default>;
+};
+
+&adc1 {
+        status = "okay";
+        pinctrl-0 = <&pinctrl_adc8_default &pinctrl_adc9_default
+			&pinctrl_adc10_default &pinctrl_adc11_default
+			&pinctrl_adc12_default &pinctrl_adc13_default
+			&pinctrl_adc14_default &pinctrl_adc15_default>;
+};
+
+/*
+&sgpiom0 {
+        status = "okay";
+        ngpios = <128>;
+};
+
+&sgpiom1 {
+        status = "okay";
+        ngpios = <128>;
+};
+*/
+
+&gpio0 {
+	gpio-line-names =
+	/*A0-A7*/	"gpio-a0","","","","","","","",
+	/*B0-B7*/	"gpio-b0","","","","","","","",
+	/*C0-C7*/	"chassis-power-good","FM_SKT1_FAULT_LED","","",
+			"","","","",
+	/*D0-D7*/	"gpio-d0","","","","","","","",
+	/*E0-E7*/	"gpio-e0","","","","","","","",
+	/*F0-F7*/	"gpio-f0","","","","","","","",
+	/*G0-G7*/	"","","","","","","","",
+	/*H0-H7*/	"gpio-h0","","","","","","","",
+	/*I0-I7*/	"gpio-i0","","","","","","","",
+	/*J0-J7*/	"gpio-j0","","","","","","","",
+	/*K0-K7*/	"gpio-k0","","","","","","","",
+	/*L0-L7*/	"gpio-l0","","","","","","","",
+	/*M0-M7*/	"gpio-00","","","","","","","",
+	/*N0-N7*/	"gpio-n0","nmi-control","","",
+			"bios-post-complete","","","",
+	/*O0-O7*/	"gpio-o0","","","","","","","",
+	/*P0-P7*/	"","power-control","reset-button","reset-control",
+			"nmi-button","","","",
+	/*Q0-Q7*/	"gpio-q0","","","identify-led","","","","",
+	/*R0-R7*/	"gpio-r0","","","","bmc-ready-n","","","",
+	/*S0-S7*/	"gpio-s0","","","",
+			"","cmos-bat-scaled-en-n","","",
+	/*T0-T7*/	"gpio-t0","","","","","","","",
+	/*U0-U7*/	"gpio-u0","","","","","","power-button","",
+	/*V0-V7*/	"SIO_S3","SIO_S5","","SIO_ONCONTROL",
+			"","spi-mux-bios","","",
+	/*W0-W7*/	"gpio-w0","","","","","","","",
+	/*X0-X7*/	"gpio-x0","","","","","","","",
+	/*Y0-Y7*/	"gpio-y0","","","","","","","",
+	/*Z0-Z7*/	"gpio-z0","identify-button","FM_FAN_PCA9555_INT_R_N","","","","","";
+};
+
+&gpio1 {
+	gpio-line-names =
+	/*18A0-18A7*/	"","","","",
+			"","","","",
+	/*18B0-18B7*/	"","","","","","","","",
+	/*18C0-18C7*/	"","","","",
+			"","","","",
+	/*18D0-18D7*/	"","","","","","","","",
+	/*18E0-18E3*/	"","","","";
+};
+
+#include "aspeed-bmc-mitac-common.dtsi"
+#include "aspeed-bmc-mitac-2600-enable-dp.dtsi"

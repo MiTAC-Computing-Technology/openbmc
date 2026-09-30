@@ -1,0 +1,59 @@
+From b9489baf887152f13eb14e8bd3b4b9805ba5cefb Mon Sep 17 00:00:00 2001
+From: Allen Kang <allen.kang@mitaccomputing.com>
+Date: Thu, 13 Aug 2026 08:40:48 -0400
+Subject: [PATCH] fan: support redundancy events for I2C fans
+
+I2C fan sensors are included in the fan redundancy collection, but
+they do not update the redundancy status because only ASPEED fan
+sensors are connected to the redundancy instance.
+
+Connect I2C fan sensors to the existing system redundancy instance so
+that I2C fan failures and recoveries generate fan redundancy lost and
+regained events.
+
+Also correct the journal messages that incorrectly reported "Fan
+Inserted" for redundancy lost and "Fan Removed" for redundancy
+regained.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/fan/FanMain.cpp    | 2 +-
+ src/fan/TachSensor.hpp | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/fan/FanMain.cpp b/src/fan/FanMain.cpp
+index 98e41a0..06ef8f7 100644
+--- a/src/fan/FanMain.cpp
++++ b/src/fan/FanMain.cpp
+@@ -531,7 +531,7 @@ void createSensors(
+                 }
+             }
+             std::optional<RedundancySensor>* redundancy = nullptr;
+-            if (fanType == FanTypes::aspeed)
++            if (fanType == FanTypes::aspeed || fanType == FanTypes::i2c)
+             {
+                 redundancy = &systemRedundancy;
+             }
+diff --git a/src/fan/TachSensor.hpp b/src/fan/TachSensor.hpp
+index 6e22f76..77a8a74 100644
+--- a/src/fan/TachSensor.hpp
++++ b/src/fan/TachSensor.hpp
+@@ -49,13 +49,13 @@ class RedundancySensor
+     static void logFanRedundancyLost()
+     {
+         const auto* msg = "OpenBMC.0.1.FanRedundancyLost";
+-        lg2::error("Fan Inserted", "REDFISH_MESSAGE_ID", msg);
++        lg2::error("Fan redundancy lost", "REDFISH_MESSAGE_ID", msg);
+     }
+ 
+     static void logFanRedundancyRestored()
+     {
+         const auto* msg = "OpenBMC.0.1.FanRedundancyRegained";
+-        lg2::error("Fan Removed", "REDFISH_MESSAGE_ID", msg);
++        lg2::error("Fan redundancy regained", "REDFISH_MESSAGE_ID", msg);
+     }
+ };
+ 
+-- 
+2.34.1
+

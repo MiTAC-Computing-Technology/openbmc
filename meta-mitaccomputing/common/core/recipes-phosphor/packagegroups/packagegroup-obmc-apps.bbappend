@@ -15,13 +15,17 @@ RDEPENDS:${PN}-extras:append = " \
     util-linux-logger \
     smbios-mdr \
     phosphor-ipmi-blobs \
-    amd-apml \
-    powercap-monitor \
     phosphor-snmp \
+    redfish-snmp-bridge \
     net-snmp \
-    amd-ras \
-    cpu-info \
+    iptables \
+    curl \
     "
+
+# AMD-only packages (cpu-info, amd-apml, amd-ras, powercap-monitor, …) live in
+# packagegroup-amd-common, installed when DISTRO_FEATURES includes amd-common
+# (see mitac.inc).
+
 
 RDEPENDS:${PN}-inventory:append = "\
     dbus-sensors \

@@ -85,7 +85,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 0,
       "Name": "Baseboard P12V VOLT_V",
       "PowerState": "On",
@@ -132,7 +132,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 1,
       "Name": "Baseboard P12V_AUX VOLT_V",
       "ScaleFactor": 0.112359551,
@@ -178,7 +178,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 2,
       "Name": "Baseboard P3V3 VOLT_V",
       "PowerState": "On",
@@ -225,7 +225,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 3,
       "Name": "Baseboard PVCCIN_CPU0 VOLT_V",
       "PowerState": "On",
@@ -234,7 +234,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 4,
       "Name": "Baseboard P5V VOLT_V",
       "PowerState": "On",
@@ -281,7 +281,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 5,
       "Name": "Baseboard PVCCFA_EHV_CPU0 VOLT_V",
       "PowerState": "On",
@@ -290,7 +290,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 8,
       "Name": "Baseboard PVNN_MAIN_CPU0 VOLT_V",
       "PowerState": "On",
@@ -299,7 +299,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 10,
       "Name": "Baseboard PVCCINF_CPU0 VOLT_V",
       "PowerState": "On",
@@ -308,7 +308,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 12,
       "Name": "Baseboard PVCCFA_EHV_FIVRA_CPU0 VOLT_V",
       "PowerState": "On",
@@ -317,7 +317,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 14,
       "Name": "Baseboard PVCCD0_HV_CPU0 VOLT_V",
       "PowerState": "On",
@@ -326,7 +326,7 @@
     },
     {
       "EntityId": 7,
-      "EntityInstance": 0,
+      "EntityInstance": 1,
       "Index": 15,
       "Name": "Baseboard PVCCD1_HV_CPU0 VOLT_V",
       "PowerState": "On",
@@ -445,6 +445,6 @@
   },
   "xyz.openbmc_project.Inventory.Decorator.Ipmi": {
     "EntityId": 7,
-    "EntityInstance": 0
+    "EntityInstance": 1
   }
 }

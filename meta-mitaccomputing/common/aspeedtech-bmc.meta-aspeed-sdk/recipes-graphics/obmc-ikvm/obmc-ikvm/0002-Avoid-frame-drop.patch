@@ -1,0 +1,396 @@
+From cf4142d20751ad0b236de83d8d3a152f78950aef Mon Sep 17 00:00:00 2001
+From: Troy Lee <troy_lee@aspeedtech.com>
+Date: Thu, 25 May 2023 15:26:31 +0800
+Subject: [PATCH 2/4] Avoid frame drop
+
+For standard jpeg, frame-drop is OK. Just send the latest frame
+to the client is fine. But for aspeed jpeg, frame-drop will lead
+to video broken because aspeed jpeg isn't full frame compression.
+
+There are 2 condition will lead to frame-drop:
+1. more than 1 buf return in getFrame().
+   To fix this problem, we add deque, buffersDone, to replace
+   lastFrameIndex. In this way, we can track all done buf.
+2. client is busy without new update request.
+   To fix this problem, we will try to deliver all done buf to
+   clients in sendFrame()
+
+The policy lastFrameIndex works:
+lastFrameIndex will be updated in getFrame to point to the lastest
+buf. Other buf done will be queue back to driver immediatelly. All
+other functions, getData/getFrameSize, use it to know which buf's
+data should be retrieved.
+
+New policy is:
+Record all done buf in getFrame(). Send all done buf to clients in
+sendFrame and then queue back to driver.
+
+Upstream-Status: Pending
+Signed-off-by: Jammy Huang <jammy_huang@aspeedtech.com>
+Signed-off-by: Troy Lee <troy_lee@aspeedtech.com>
+---
+ ikvm_server.cpp | 39 +++++++++--------------
+ ikvm_video.cpp  | 84 ++++++++++++++++++++++++++++++++-----------------
+ ikvm_video.hpp  | 33 +++++++++++++++++--
+ 3 files changed, 99 insertions(+), 57 deletions(-)
+
+diff --git a/ikvm_server.cpp b/ikvm_server.cpp
+index 31b9549..679dd74 100644
+--- a/ikvm_server.cpp
++++ b/ikvm_server.cpp
+@@ -10,6 +10,7 @@
+ #include <xyz/openbmc_project/Common/error.hpp>
+ 
+ #define	rfbEncodingAspeed   18
++#define ROUND_DOWN(x,r) ((x) & ~((r) - 1))
+ 
+ namespace ikvm
+ {
+@@ -120,7 +121,7 @@ void Server::sendFrame()
+     uint32_t frameCount = 0;
+     rfbClientIteratorPtr it;
+     rfbClientPtr cl;
+-    int64_t frame_crc = -1;
++    bool frame_sent = false;
+ 
+     if (!data || pendingResize)
+     {
+@@ -133,6 +134,7 @@ void Server::sendFrame()
+     {
+         ClientData* cd = (ClientData*)cl->clientData;
+         rfbFramebufferUpdateMsg* fu = (rfbFramebufferUpdateMsg*)cl->updateBuf;
++        auto i = video.buffersDone.front();
+ 
+         if (!cd)
+         {
+@@ -150,26 +152,8 @@ void Server::sendFrame()
+             continue;
+         }
+ 
+-        if (calcFrameCRC)
+-        {
+-            if (frame_crc == -1)
+-            {
+-                /* JFIF header contains some varying data so skip it for
+-                 * checksum calculation */
+-                frame_crc =
+-                    boost::crc<32, 0x04C11DB7, 0xFFFFFFFF, 0xFFFFFFFF, true,
+-                               true>(data + 0x30, video.getFrameSize() - 0x30);
+-            }
+-
+-            if (cd->last_crc == frame_crc)
+-            {
+-                continue;
+-            }
+-
+-            cd->last_crc = frame_crc;
+-        }
+-
+         cd->needUpdate = false;
++        frame_sent = true;
+ 
+         if (cl->enableLastRectEncoding)
+         {
+@@ -184,7 +168,7 @@ void Server::sendFrame()
+         {
+             case V4L2_PIX_FMT_RGB24:
+             case V4L2_PIX_FMT_RGB565:
+-                framebuffer.assign(data, data + video.getFrameSize());
++                framebuffer.assign(data, data + video.getFrameSize(i));
+                 rfbMarkRectAsModified(server, 0, 0, video.getWidth(),
+                                       video.getHeight());
+                 break;
+@@ -197,7 +181,7 @@ void Server::sendFrame()
+                 rfbSendTightHeader(cl, 0, 0, video.getWidth(),
+                                    video.getHeight());
+                 cl->updateBuf[cl->ublen++] = (char)(rfbTightJpeg << 4);
+-                rfbSendCompressedDataTight(cl, data, video.getFrameSize());
++                rfbSendCompressedDataTight(cl, data, video.getFrameSize(i));
+                 if (cl->enableLastRectEncoding)
+                 {
+                     rfbSendLastRectMarker(cl);
+@@ -226,6 +210,7 @@ void Server::sendFrame()
+                 cl->tightEncoding = rfbEncodingAspeed;
+                 rfbSendTightHeader(cl, 0, 0, video.getWidth(), video.getHeight());
+ 
++                frameCount = video.getFrameCount(i);
+                 cl->updateBuf[cl->ublen++] = (char)(0);
+                 cl->updateBuf[cl->ublen++] = (char)(frameCount >> 24 & 0xff);
+                 cl->updateBuf[cl->ublen++] = (char)(frameCount >> 16 & 0xff);
+@@ -234,7 +219,7 @@ void Server::sendFrame()
+                 cl->updateBuf[cl->ublen++] = (char)(video.getSubsampling());
+                 cl->updateBuf[cl->ublen++] = (char)(0x00); // the value of quality if changed
+ 
+-                rfbSendCompressedDataTight(cl, data, video.getFrameSize());
++                rfbSendCompressedDataTight(cl, data, video.getFrameSize(i));
+                 if (cl->enableLastRectEncoding)
+                 {
+                     rfbSendLastRectMarker(cl);
+@@ -248,6 +233,9 @@ void Server::sendFrame()
+     }
+ 
+     rfbReleaseClientIterator(it);
++
++    if (frame_sent)
++        video.releaseFrames();
+ }
+ 
+ rfbBool Server::rfbSendCompressedDataHextile(rfbClientPtr cl, char* buf,
+@@ -306,7 +294,7 @@ enum rfbNewClientAction Server::newClient(rfbClientPtr cl)
+     Server* server = (Server*)cl->screen->screenData;
+ 
+     cl->clientData =
+-        new ClientData(server->video.getFrameRate(), &server->input);
++        new ClientData(ROUND_DOWN(server->video.getFrameRate(), 8), &server->input);
+     cl->clientGoneHook = clientGone;
+     cl->clientFramebufferUpdateRequestHook = clientFramebufferUpdateRequest;
+     if (!server->numClients++)
+@@ -349,8 +337,9 @@ void Server::doResize()
+             continue;
+         }
+ 
++        // let skipFrame round-down per interval of aspeed's I frame
+         // delay video updates to give the client time to resize
+-        cd->skipFrame = video.getFrameRate();
++        cd->skipFrame = ROUND_DOWN(video.getFrameRate(), 8);
+     }
+ 
+     rfbReleaseClientIterator(it);
+diff --git a/ikvm_video.cpp b/ikvm_video.cpp
+index c6938bd..f8b2b94 100644
+--- a/ikvm_video.cpp
++++ b/ikvm_video.cpp
+@@ -32,7 +32,7 @@ using namespace sdbusplus::xyz::openbmc_project::Common::Device::Error;
+ 
+ Video::Video(const std::string& p, Input& input, int fr, int sub, int fmt) :
+     resizeAfterOpen(false), timingsError(false), fd(-1), frameRate(fr),
+-    lastFrameIndex(-1), height(600), width(800), subSampling(sub), input(input),
++    height(600), width(800), subSampling(sub), input(input),
+     path(p)
+ {
+     switch (fmt)
+@@ -109,12 +109,21 @@ void Video::probePixelFormat()
+ 
+ char* Video::getData()
+ {
+-    if (lastFrameIndex >= 0)
++    if (buffersDone.empty())
+     {
+-        return (char*)buffers[lastFrameIndex].data;
++        return nullptr;
+     }
+ 
+-    return nullptr;
++    return (char*)buffers[buffersDone.front()].data;
++}
++
++char* Video::getData(unsigned int i)
++{
++    if (i >= buffers.size())
++    {
++        return nullptr;
++    }
++    return (char*)buffers[i].data;
+ }
+ 
+ void Video::getFrame()
+@@ -130,6 +139,12 @@ void Video::getFrame()
+         return;
+     }
+ 
++    // Don't get more new frames until we run out of previous ones
++    if (!buffersDone.empty())
++    {
++        return;
++    }
++
+     FD_ZERO(&fds);
+     FD_SET(fd, &fds);
+ 
+@@ -158,48 +173,59 @@ void Video::getFrame()
+ 
+                 if (!(buf.flags & V4L2_BUF_FLAG_ERROR))
+                 {
+-                    lastFrameIndex = buf.index;
+-                    buffers[lastFrameIndex].payload = buf.bytesused;
+-                    break;
++                    buffers[buf.index].payload = buf.bytesused;
++                    buffers[buf.index].sequence = buf.sequence;
++                    buffersDone.push_back(buf.index);
+                 }
+                 else
+                 {
+                     buffers[buf.index].payload = 0;
++                    qbuf(buf.index);
+                 }
+             }
+         } while (rc >= 0);
+     }
+ 
+     fcntl(fd, F_SETFL, fd_flags);
++}
+ 
+-    for (unsigned int i = 0; i < buffers.size(); ++i)
++void Video::qbuf(int i)
++{
++    int rc;
++    v4l2_buffer buf;
++    if (!buffers[i].queued)
+     {
+-        if (i == (unsigned int)lastFrameIndex)
++        memset(&buf, 0, sizeof(v4l2_buffer));
++        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
++        buf.memory = V4L2_MEMORY_MMAP;
++        buf.index = i;
++
++        rc = ioctl(fd, VIDIOC_QBUF, &buf);
++        if (rc)
+         {
+-            continue;
++            lg2::error("Failed to query buffer {ERROR}", "ERROR",
++                       strerror(errno));
+         }
+-
+-        if (!buffers[i].queued)
++        else
+         {
+-            memset(&buf, 0, sizeof(v4l2_buffer));
+-            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+-            buf.memory = V4L2_MEMORY_MMAP;
+-            buf.index = i;
+-
+-            rc = ioctl(fd, VIDIOC_QBUF, &buf);
+-            if (rc)
+-            {
+-                lg2::error("Failed to queue buffer {ERROR}", "ERROR",
+-                           strerror(errno));
+-            }
+-            else
+-            {
+-                buffers[i].queued = true;
+-            }
++            buffers[i].queued = true;
+         }
+     }
+ }
+ 
++void Video::releaseFrames()
++{
++    int i;
++
++    if (!buffersDone.empty())
++    {
++        i = buffersDone.front();
++        buffersDone.pop_front();
++        qbuf(i);
++    }
++}
++
++
+ bool Video::needsResize()
+ {
+     int rc;
+@@ -248,7 +274,7 @@ bool Video::needsResize()
+                 xyz::openbmc_project::Common::File::Open::PATH(path.c_str()));
+         }
+ 
+-        lastFrameIndex = -1;
++        buffersDone.clear();
+         return true;
+     }
+ 
+@@ -554,7 +580,7 @@ void Video::stop()
+         return;
+     }
+ 
+-    lastFrameIndex = -1;
++    buffersDone.clear();
+ 
+     rc = ioctl(fd, VIDIOC_STREAMOFF, &type);
+     if (rc)
+diff --git a/ikvm_video.hpp b/ikvm_video.hpp
+index de84b04..1b7e63f 100644
+--- a/ikvm_video.hpp
++++ b/ikvm_video.hpp
+@@ -5,6 +5,7 @@
+ #include <mutex>
+ #include <string>
+ #include <vector>
++#include <deque>
+ 
+ #ifndef V4L2_PIX_FMT_AJPG
+ #define V4L2_PIX_FMT_AJPG     v4l2_fourcc('A', 'J', 'P', 'G')
+@@ -44,8 +45,11 @@ class Video
+      * @return Pointer to the video frame data
+      */
+     char* getData();
++    char* getData(unsigned int i);
+     /* @brief Performs read to grab latest video frame */
+     void getFrame();
++    /* @brief Performs return done video frames back to driver */
++    void releaseFrames();
+     /*
+      * @brief Probes the video device for the pixel format and sets the
+      *        corresponding Video class variables
+@@ -86,7 +90,28 @@ class Video
+      */
+     inline size_t getFrameSize() const
+     {
+-        return buffers[lastFrameIndex].payload;
++        if (buffersDone.empty())
++            return 0;
++        return buffers[buffersDone.front()].payload;
++    }
++    inline size_t getFrameSize(unsigned int i) const
++    {
++        return buffers[i].payload;
++    }
++    /*
++     * @brief Gets the video frame count in sequence
++     *
++     * @return Value of video frame count in sequence
++     */
++    inline size_t getFrameCount() const
++    {
++        if (buffersDone.empty())
++            return 0;
++        return buffers[buffersDone.front()].sequence;
++    }
++    inline size_t getFrameCount(unsigned int i) const
++    {
++        return buffers[i].sequence;
+     }
+     /*
+      * @brief Gets the height of the video frame
+@@ -139,8 +164,11 @@ class Video
+     static int bytesPerPixel;
+     /* @brief Number of components in a pixel (i.e. 3 for RGB pixel) */
+     static int samplesPerPixel;
++    /* @brief done buffer storage */
++    std::deque<int> buffersDone;
+ 
+   private:
++    void qbuf(int i);
+     /*
+      * @struct Buffer
+      * @brief Store the address and size of frame data from streaming
+@@ -159,6 +187,7 @@ class Video
+         bool queued;
+         size_t payload;
+         size_t size;
++        uint32_t sequence;
+     };
+ 
+     /*
+@@ -172,8 +201,6 @@ class Video
+     int fd;
+     /* @brief Desired frame rate of video stream in frames per second */
+     int frameRate;
+-    /* @brief Buffer index for the last video frame */
+-    int lastFrameIndex;
+     /* @brief Height in pixels of the video frame */
+     size_t height;
+     /* @brief Width in pixels of the video frame */
+-- 
+2.43.0
+

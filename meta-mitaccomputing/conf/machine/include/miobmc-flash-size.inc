@@ -4,4 +4,4 @@
 #    meta-mitaccomputing/common/core/recipes-kernel/linux/linux-aspeed/README.md
 
 FLASH_ROFS_OFFSET:flash-65536 ?= "10240"
-FLASH_RWFS_OFFSET:flash-65536 ?= "49152"
+FLASH_RWFS_OFFSET:flash-65536 ?= "55296"

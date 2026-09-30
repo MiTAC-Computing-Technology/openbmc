@@ -1,0 +1,85 @@
+From 9ba39559c188dc060354dc4e21835ef083371de7 Mon Sep 17 00:00:00 2001
+From: Allen Lin <mingchih.lin@mitaccomputing.com>
+Date: Thu, 13 Aug 2026 08:24:43 +0000
+Subject: [PATCH] [impv] Add event log for system reset
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+
+Description:
+ - Add event logs for force warm reset, graceful warm reset and watchdog-triggered reset.
+ - Not supported for reset button, hard reset, and host restart from host terminal console or by pressing Ctrl + Alt + Del.
+
+Reference:
+ - https://jira.navman.co.nz/jira/browse/MBMCS-133
+ - https://jira.navman.co.nz/jira/browse/OFDT-145
+---
+ src/power_control.cpp | 32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+index 474b8d2..1be9e89 100644
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -906,6 +906,35 @@ static void nmiDiagIntLog()
+                     "OpenBMC.0.1.NMIDiagnosticInterrupt", NULL);
+ }
+ 
++static void hostWarmResetLog()
++{
++    sd_journal_send("MESSAGE=PowerControl: Warm reset detected", "PRIORITY=%i",
++                    LOG_INFO, "REDFISH_MESSAGE_ID=%s",
++                    "MiOBMC.0.1.HostWarmReset", NULL);
++}
++
++static void hostResetByIPMILog()
++{
++    sd_journal_send("MESSAGE=PowerControl: System reset requested by IPMI",
++                    "PRIORITY=%i", LOG_INFO, "REDFISH_MESSAGE_ID=%s",
++                    "MiOBMC.0.1.HostResetByIPMI", NULL);
++}
++
++static void hostResetByWatchdogLog()
++{
++    sd_journal_send(
++        "MESSAGE=PowerControl: System reset triggered by watchdog timeout",
++        "PRIORITY=%i", LOG_INFO, "REDFISH_MESSAGE_ID=%s",
++        "MiOBMC.0.1.HostResetByWatchdog", NULL);
++}
++
++static void hostGracefulWarmResetLog()
++{
++    sd_journal_send("MESSAGE=PowerControl: Host graceful warm reset detected",
++                    "PRIORITY=%i", LOG_INFO, "REDFISH_MESSAGE_ID=%s",
++                    "MiOBMC.0.1.HostGracefulWarmReset", NULL);
++}
++
+ PersistentState::PersistentState()
+ {
+     // create the power control directory if it doesn't exist
+@@ -3266,6 +3295,7 @@ int main(int argc, char* argv[])
+                 {
+                     sendPowerControlEvent(Event::gracefulPowerCycleRequest);
+                     addRestartCause(RestartCause::command);
++                    hostGracefulWarmResetLog();
+                 }
+                 else
+                 {
+@@ -3283,6 +3313,7 @@ int main(int argc, char* argv[])
+                 {
+                     sendPowerControlEvent(Event::resetRequest);
+                     addRestartCause(RestartCause::command);
++                    hostWarmResetLog();
+                 }
+                 else
+                 {
+@@ -3722,6 +3753,7 @@ int main(int argc, char* argv[])
+                 "xyz.openbmc_project.State.Host.RestartCause.WatchdogTimer")
+             {
+                 addRestartCause(RestartCause::watchdog);
++                hostResetByWatchdogLog();
+             }
+             else
+             {
+-- 
+2.43.0
+

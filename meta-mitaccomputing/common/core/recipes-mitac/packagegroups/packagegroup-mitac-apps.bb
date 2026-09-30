@@ -29,6 +29,10 @@ RDEPENDS:${PN}-chassis = " \
 SUMMARY:${PN}-flash = "MiTAC Flash"
 RDEPENDS:${PN}-flash = " \
         phosphor-software-manager \
+        mitac-software-manager \
+        "
+RDEPENDS:${PN}-flash:append:mitac-sign = " \
+        mitac-signing-keys \
         "
 
 SUMMARY:${PN}-system = "MiTAC System"

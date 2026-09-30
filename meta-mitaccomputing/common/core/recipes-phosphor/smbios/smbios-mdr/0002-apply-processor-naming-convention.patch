@@ -1,0 +1,31 @@
+From d50a5c3299e1b4426847af5ce54a58b56cc3407a Mon Sep 17 00:00:00 2001
+From: "buzz.ku" <buzz.ku@mitaccomputing.com>
+Date: Wed, 17 Jun 2026 11:13:04 +0000
+Subject: [PATCH] apply processor naming convention
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ include/smbios_mdrv2.hpp | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/include/smbios_mdrv2.hpp b/include/smbios_mdrv2.hpp
+index a53cca5..1dc956a 100644
+--- a/include/smbios_mdrv2.hpp
++++ b/include/smbios_mdrv2.hpp
+@@ -164,9 +164,11 @@ struct StructureHeader
+     uint16_t handle;
+ } __attribute__((packed));
+ 
+-static constexpr const char* cpuSuffix = "/chassis/motherboard/cpu";
++// OFDT-19: Naming convention of processor name should be uppercase and use
++// underline ('_') to replace space.
++static constexpr const char* cpuSuffix = "/chassis/motherboard/CPU_";
+ 
+-static constexpr const char* dimmSuffix = "/chassis/motherboard/dimm";
++static constexpr const char* dimmSuffix = "/chassis/motherboard/DIMM_";
+ 
+ static constexpr const char* pcieSuffix = "/chassis/motherboard/pcieslot";
+ 
+-- 
+2.43.0
+

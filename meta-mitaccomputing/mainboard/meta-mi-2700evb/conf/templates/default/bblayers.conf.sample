@@ -16,7 +16,8 @@ BBLAYERS ?= " \
   ##OEROOT##/meta-arm/meta-arm-toolchain \
   ##OEROOT##/meta-security \
   ##OEROOT##/meta-mitaccomputing/common/aspeedtech-bmc.meta-aspeed-sdk/meta-zephyr/meta-zephyr-core \
-  ##OEROOT##/meta-aspeed \
+  ##OEROOT##/meta-mitaccomputing/common/aspeedtech-bmc.meta-aspeed-sdk \
+  ##OEROOT##/meta-mitaccomputing/common/aspeedtech-bmc.meta-aspeed-sdk/meta-ast2700-sdk \
   ##OEROOT##/meta-mitaccomputing \
   ##OEROOT##/meta-mitaccomputing/mp-nda/meta-nda-mic-amd \
   ##OEROOT##/meta-mitaccomputing/mp-nda/meta-nda-mic-intel \

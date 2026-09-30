@@ -1,0 +1,114 @@
+From 1e0180946d7be0a17fafa872067f390006fb1be5 Mon Sep 17 00:00:00 2001
+From: Allen Kang <allen.kang@mitaccomputing.com>
+Date: Tue, 28 Jul 2026 04:12:13 -0400
+Subject: [PATCH] Fix power button long pressed issue
+
+Under certain conditions, enablePassThrough(false) has no effect
+when the power button is long pressed. This causes the system to
+power on automatically.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/power_control.cpp | 36 +++++++++++++++++++++++++++++-------
+ 1 file changed, 29 insertions(+), 7 deletions(-)
+
+diff --git a/src/power_control.cpp b/src/power_control.cpp
+index ff895a9..474b8d2 100644
+--- a/src/power_control.cpp
++++ b/src/power_control.cpp
+@@ -230,6 +230,7 @@ static void beep(const uint8_t& beepPriority)
+ }
+ 
+ static std::optional<bool> passThroughCurrentState;
++static bool powerButtonAsserted = false;
+ 
+ void enablePassThrough(bool enable)
+ {
+@@ -257,6 +258,18 @@ void enablePassThrough(bool enable)
+     }
+ }
+ 
++static void restorePassThroughIfPowerButtonReleased()
++{
++    if (powerButtonAsserted)
++    {
++        lg2::info(
++            "Deferring pass-through enable: power button is still asserted");
++        return;
++    }
++
++    enablePassThrough(true);
++}
++
+ static OperatingSystemOSStatus operatingSystemState;
+ 
+ static void setOperatingSystemState(const OperatingSystemOSStatus stage)
+@@ -711,8 +724,9 @@ static void setPowerState(const PowerState state)
+ 
+     if (powerState == PowerState::off)
+     {
+-        lg2::info("Force enabling pass-through after settling into Off state");
+-        enablePassThrough(true);
++        lg2::info(
++            "Restoring pass-through after settling into Off state if the power button is released");
++        restorePassThroughIfPowerButtonReleased();
+     }
+ }
+ 
+@@ -1771,7 +1785,7 @@ static void currentHostStateMonitor()
+                 powerState != PowerState::transitionToCycleOff &&
+                 powerState != PowerState::gracefulTransitionToCycleOff)
+             {
+-                enablePassThrough(true);
++                restorePassThroughIfPowerButtonReleased();
+             }
+         });
+ }
+@@ -2189,6 +2203,7 @@ static void sioS5Handler(bool state)
+ static void powerButtonHandler(bool state)
+ {
+     bool asserted = state == powerButtonConfig.polarity;
++    powerButtonAsserted = asserted;
+     powerButtonIface->set_property("ButtonPressed", asserted);
+     if (asserted)
+     {
+@@ -2203,6 +2218,12 @@ static void powerButtonHandler(bool state)
+             lg2::info("power button press masked");
+         }
+     }
++    else if (powerState == PowerState::off)
++    {
++        lg2::info(
++            "Power button released in Off state; restoring pass-through");
++        restorePassThroughIfPowerButtonReleased();
++    }
+ #if USE_BUTTON_PASSTHROUGH
+     gpiod::line gpioLine;
+     bool outputState =
+@@ -3493,18 +3514,19 @@ int main(int argc, char* argv[])
+             });
+ 
+         // Check power button state
+-        bool powerButtonPressed;
+         if (powerButtonConfig.type == ConfigType::GPIO)
+         {
+-            powerButtonPressed = powerButtonLine.get_value() == 0;
++            powerButtonAsserted =
++                powerButtonLine.get_value() == powerButtonConfig.polarity;
+         }
+         else
+         {
+-            powerButtonPressed = getProperty(powerButtonConfig) == 0;
++            powerButtonAsserted =
++                getProperty(powerButtonConfig) == powerButtonConfig.polarity;
+         }
+ 
+         powerButtonIface->register_property("ButtonPressed",
+-                                            powerButtonPressed);
++                                            powerButtonAsserted);
+ 
+         powerButtonIface->initialize();
+     }
+-- 
+2.34.1
+

@@ -11,11 +11,15 @@ SRC_URI +=" \
     file://usb_network.sh \
     file://usb_network.service \
     file://00-bmc-usb0.network \
+    file://00-ubb-static.network \
+    file://99-ubb-name.rules \
     "
 
 SYSTEMD_PACKAGES = "${PN}"
 SYSTEMD_SERVICE:${PN} += " usb_network.service"
 FILES:${PN} += "${sysconfdir_native}/systemd/network/00-bmc-usb0.network"
+FILES:${PN} += "${sysconfdir_native}/systemd/network/00-ubb-static.network"
+FILES:${PN} += "${sysconfdir}/udev/rules.d/99-ubb-name.rules"
 
 do_install() {
     install -d ${D}${libexecdir}/${PN}
@@ -26,4 +30,8 @@ do_install() {
 
     install -d ${D}${sysconfdir_native}/systemd/network/
     install -m 0644 ${UNPACKDIR}/00-bmc-usb0.network ${D}${sysconfdir_native}/systemd/network
+    install -m 0644 ${UNPACKDIR}/00-ubb-static.network ${D}${sysconfdir_native}/systemd/network
+
+    install -d ${D}${sysconfdir}/udev/rules.d/
+    install -m 0644 ${UNPACKDIR}/99-ubb-name.rules ${D}${sysconfdir}/udev/rules.d/
 }

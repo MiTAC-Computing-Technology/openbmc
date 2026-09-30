@@ -1,0 +1,123 @@
+From 8a54f62a03028d88d73d8935ce0baac1bee38f74 Mon Sep 17 00:00:00 2001
+From: "justin.kuo" <justin.kuo@mitaccomputing.com>
+Date: Fri, 31 Jul 2026 03:31:09 +0000
+Subject: [PATCH] Prevent leakdetector service crashes when failing to
+ get the GPIO pin value.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/GPIOInterface.cpp | 65 ++++++++++++++++++++++++++++++++++---------
+ src/GPIOInterface.hpp |  2 +-
+ 2 files changed, 53 insertions(+), 14 deletions(-)
+
+diff --git a/src/GPIOInterface.cpp b/src/GPIOInterface.cpp
+index 2badb52..f78136b 100644
+--- a/src/GPIOInterface.cpp
++++ b/src/GPIOInterface.cpp
+@@ -117,13 +117,22 @@ auto GPIOInterface::start() -> sdbusplus::async::task<>
+ 
+ auto GPIOInterface::readGPIOAsync() -> sdbusplus::async::task<>
+ {
+-    auto lineValue = line.get_value();
+-    if (lineValue < 0)
++    try
+     {
+-        error("Failed to read GPIO line {LINENAME}", "LINENAME", pinName);
+-        co_return;
++        auto lineValue = line.get_value();
++        if (lineValue < 0)
++        {
++            error("Failed to read GPIO line {LINENAME}", "LINENAME", pinName);
++            co_return;
++        }
++        co_await updateStateCallback(
++            lineValue == gpiod::line_event::RISING_EDGE);
++    }
++    catch (std::exception& e)
++    {
++        error("Failed to get line value for {LINENAME} with error {ERROR}",
++              "LINENAME", pinName, "ERROR", e.what());
+     }
+-    co_await updateStateCallback(lineValue == gpiod::line_event::RISING_EDGE);
+ 
+     co_return;
+ }
+@@ -137,10 +146,19 @@ auto GPIOInterface::readGPIOAsyncEvent() -> sdbusplus::async::task<>
+ 
+         if (gpio_detect == GPIO_DETECTION::eventing)
+         {
+-            line.event_read();
+-            auto lineValue = line.get_value();
+-            co_await updateStateCallback(
+-                lineValue == gpiod::line_event::RISING_EDGE);
++            try
++            {
++                line.event_read();
++                auto lineValue = line.get_value();
++                co_await updateStateCallback(
++                    lineValue == gpiod::line_event::RISING_EDGE);
++            }
++            catch (std::exception& e)
++            {
++                error(
++                    "Eventing failed to get line value for {LINENAME} with error {ERROR}",
++                    "LINENAME", pinName, "ERROR", e.what());
++            }
+         }
+         else if (gpio_detect == GPIO_DETECTION::polling)
+         {
+@@ -155,13 +173,34 @@ auto GPIOInterface::readGPIOAsyncEvent() -> sdbusplus::async::task<>
+                     continue; // Spurious wakeup, try again
+                 }
+                 // Handle actual read error here
++                error(
++                    "Stopping GPIO polling for {LINENAME}: read() failed with errno {ERRNO}",
++                    "LINENAME", pinName, "ERRNO", errno);
+                 break;
+             }
+-            auto lineValue = line.get_value();
+-            if (lineValue != lastReading)
++
++            try
++            {
++                auto lineValue = line.get_value();
++                if (lineValue != lastReading)
++                {
++                    lastReading = lineValue;
++                    co_await updateStateCallback(lineValue == 1);
++                }
++            }
++            catch (std::exception& e)
+             {
+-                lastReading = lineValue;
+-                co_await updateStateCallback(lineValue == 1);
++                if (errno != EAGAIN && errno != EWOULDBLOCK)
++                {
++                    error(
++                        "Stopping GPIO polling for {LINENAME}: get_value() failed with errno {ERRNO} error {ERROR}",
++                        "LINENAME", pinName, "ERRNO", errno, "ERROR", e.what());
++                    break;
++                }
++
++                error(
++                    "Polling failed to get line value for {LINENAME} with error {ERROR}",
++                    "LINENAME", pinName, "ERROR", e.what());
+             }
+         }
+     }
+diff --git a/src/GPIOInterface.hpp b/src/GPIOInterface.hpp
+index 37a2089..1b2edd2 100644
+--- a/src/GPIOInterface.hpp
++++ b/src/GPIOInterface.hpp
+@@ -40,7 +40,7 @@ class GPIOInterface
+     auto readGPIOAsyncEvent() -> sdbusplus::async::task<>;
+ 
+     sdbusplus::async::context& ctx;
+-    const std::string& pinName;
++    const std::string pinName;
+     GPIO_DETECTION detection;
+     Callback_t updateStateCallback;
+     gpiod::line line;
+-- 
+2.45.2
+

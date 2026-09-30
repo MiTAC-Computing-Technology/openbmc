@@ -1,0 +1,15 @@
+[Unit]
+Description=Periodic BMC->UBB time resync
+# Safety net for satellite drift, cold power-cycles, and later BMC clock
+# corrections (e.g. an NTP step that lands minutes after boot).
+
+[Timer]
+# UBB has no RTC: it resets to 1970 on any UBB-only power cycle, so keep the
+# resync interval short to bound how long it can sit un-synced.
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=20s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

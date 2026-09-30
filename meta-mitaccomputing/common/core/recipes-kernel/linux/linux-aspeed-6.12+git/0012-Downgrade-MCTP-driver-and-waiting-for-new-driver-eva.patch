@@ -1,4 +1,3 @@
-From 1e2221fb4a7304eb1aade38d0ef06924e5cac08d Mon Sep 17 00:00:00 2001
 From: Jian-Ming Wang <jian.ming.wang@mitaccomputing.com>
 Date: Tue, 16 Dec 2025 07:40:18 +0000
 Subject: [PATCH 1/1] Use legacy implementation of MCTP driver.
@@ -12,10 +11,16 @@ Upstream-Status: Inappropriate [No upstream maintenance]
  4 files changed, 562 insertions(+), 111 deletions(-)
 
 diff --git a/drivers/net/mctp/mctp-pcie-vdm.c b/drivers/net/mctp/mctp-pcie-vdm.c
-index e89a296af38c..56425910da9d 100644
+index cba101860..56425910d 100644
 --- a/drivers/net/mctp/mctp-pcie-vdm.c
 +++ b/drivers/net/mctp/mctp-pcie-vdm.c
-@@ -37,6 +37,18 @@
+@@ -33,11 +33,22 @@
+ #include <net/mctp.h>
+ #include <net/mctpdevice.h>
+ 
+-// 64bytes mctp payload + 4bytes mctp header
+-#define MCTP_PCIE_VDM_MIN_MTU (64 + 4)
++#define MCTP_PCIE_VDM_MIN_MTU 64
  #define MCTP_PCIE_VDM_MAX_MTU 512
  /* 16byte */
  #define MCTP_PCIE_VDM_HDR_SIZE 16
@@ -34,7 +39,7 @@ index e89a296af38c..56425910da9d 100644
  #define MCTP_PAYLOAD_IC_TYPE_SIZE 1
  #define MCTP_RECEIVE_PKT_TIMEOUT_MS 5
  
-@@ -52,6 +64,13 @@
+@@ -53,6 +64,13 @@
  /* MCTP message type */
  #define MCTP_MSG_TYPE_MASK GENMASK(6, 0)
  #define MCTP_PCIE_VDM_MSG_TYPE 0x7E
@@ -48,10 +53,18 @@ index e89a296af38c..56425910da9d 100644
  
  #define MCTP_PCIE_SWAP_NET_ENDIAN(arr, len)       \
  	do {                                      \
-@@ -84,6 +103,11 @@ enum mctp_ctrl_command_code {
- 	MCTP_CTRL_CMD_DISCOVERY_NOTIFY = 0x0D
+@@ -77,6 +95,19 @@ enum mctp_pcie_vdm_route_type {
+ 	MCTP_PCIE_VDM_BROADCAST_FROM_RC = 3,
  };
  
++enum mctp_ctrl_command_code {
++	MCTP_CTRL_CMD_SET_ENDPOINT_ID = 0x01,
++	MCTP_CTRL_CMD_GET_ENDPOINT_ID = 0x02,
++	MCTP_CTRL_CMD_PREPARE_ENDPOINT_DISCOVERY = 0x0B,
++	MCTP_CTRL_CMD_ENDPOINT_DISCOVERY = 0x0C,
++	MCTP_CTRL_CMD_DISCOVERY_NOTIFY = 0x0D
++};
++
 +struct mctp_ctrl_msg_hdr {
 +	u8 instanceID : 5, rsvd : 1, datagram : 1, rq : 1;
 +	u8 command_code;
@@ -60,7 +73,7 @@ index e89a296af38c..56425910da9d 100644
  struct mctp_pcie_vdm_hdr {
  	u32 length : 10, rsvd0 : 2, attr : 2, ep : 1, td : 1, rsvd1 : 4, tc : 3,
  		rsvd2 : 1, route_type : 5, fmt : 2, rsvd3 : 1;
-@@ -94,11 +118,31 @@ struct mctp_pcie_vdm_hdr {
+@@ -87,11 +118,31 @@ struct mctp_pcie_vdm_hdr {
  	u16 pci_target_id;
  };
  
@@ -92,7 +105,7 @@ index e89a296af38c..56425910da9d 100644
  static const struct mctp_pcie_vdm_hdr mctp_pcie_vdm_hdr_template = {
  	.fmt = MCTP_PCIE_VDM_FMT_4DW,
  	.route_type = MCTP_PCIE_VDM_TYPE_MSG | MCTP_PCIE_VDM_ROUTE_BY_ID,
-@@ -129,22 +173,300 @@ static void mctp_pcie_vdm_display_skb_buff_data(struct sk_buff *skb)
+@@ -122,22 +173,300 @@ static void mctp_pcie_vdm_display_skb_buff_data(struct sk_buff *skb)
  	pr_debug("%s\n", buf);
  }
  
@@ -397,10 +410,12 @@ index e89a296af38c..56425910da9d 100644
  
  	hdr->length = payload_len_dw;
  	hdr->tag_pad_len =
-@@ -160,42 +482,177 @@ static int mctp_pcie_vdm_xmit(struct net_device *ndev, struct sk_buff *skb)
+@@ -153,46 +482,177 @@ static int mctp_pcie_vdm_xmit(struct net_device *ndev, struct sk_buff *skb)
  	if (rc) {
  		pr_err("%s: failed to send packet, rc %d\n", __func__, rc);
  		stats->tx_errors++;
+-		if (rc != -ENOSPC && rc != -EBUSY)
+-			stats->tx_dropped++;
 -	} else {
 -		stats->tx_packets++;
 -		stats->tx_bytes += (skb->len - sizeof(struct mctp_pcie_vdm_hdr));
@@ -424,15 +439,17 @@ index e89a296af38c..56425910da9d 100644
 +		wait_event_idle(vdm_dev->tx_wait,
 +				__ptr_ring_peek(&vdm_dev->tx_queue) ||
 +					kthread_should_stop());
++
++		if (kthread_should_stop())
++			break;
  
 -	if (skb) {
 -		rc = mctp_pcie_vdm_xmit(ndev, skb);
 -		if (rc) {
 -			pr_err("%s: failed to send packet, rc %d\n", __func__, rc);
--			ret = NETDEV_TX_BUSY;
-+		if (kthread_should_stop())
-+			break;
-+
+-			if (rc == -ENOSPC || rc == -EBUSY) {
+-				ret = NETDEV_TX_BUSY;
+-				return ret;
 +		while (__ptr_ring_peek(&vdm_dev->tx_queue)) {
 +			struct sk_buff *skb;
 +
@@ -441,11 +458,14 @@ index e89a296af38c..56425910da9d 100644
 +			if (skb) {
 +				mctp_pcie_vdm_xmit(vdm_dev, skb);
 +				kfree_skb(skb);
-+			}
-+		}
+ 			}
+ 		}
+-		ret = NETDEV_TX_OK;
+-		kfree_skb(skb);
 +		if (netif_queue_stopped(vdm_dev->ndev))
 +			netif_wake_queue(vdm_dev->ndev);
-+	}
+ 	}
+-	return ret;
 +
 +	pr_debug("%s stopping\n", __func__);
 +	return 0;
@@ -498,9 +518,7 @@ index e89a296af38c..56425910da9d 100644
 +		if (net_status == NET_RX_SUCCESS) {
 +			stats->rx_packets++;
 +			stats->rx_bytes += len;
- 		} else {
--			ret = NETDEV_TX_OK;
--			kfree_skb(skb);
++		} else {
 +			stats->rx_dropped++;
 +		}
 +
@@ -522,12 +540,11 @@ index e89a296af38c..56425910da9d 100644
 +
 +			mctp_pcie_vdm_update_route_table(vdm_dev,
 +							 src_eid, bdf);
- 		}
++		}
 +
 +		vdm_dev->callback_ops->free_packet(packet);
 +		packet = vdm_dev->callback_ops->recv_packet(vdm_dev->dev);
- 	}
--	return ret;
++	}
 +}
 +
 +static int mctp_pcie_vdm_add_mctp_dev(struct mctp_pcie_vdm_dev *vdm_dev)
@@ -593,7 +610,7 @@ index e89a296af38c..56425910da9d 100644
  }
  
  static int mctp_pcie_vdm_hdr_create(struct sk_buff *skb,
-@@ -203,17 +660,14 @@ static int mctp_pcie_vdm_hdr_create(struct sk_buff *skb,
+@@ -200,17 +660,14 @@ static int mctp_pcie_vdm_hdr_create(struct sk_buff *skb,
  				    unsigned short type, const void *daddr,
  				    const void *saddr, unsigned int len)
  {
@@ -613,7 +630,7 @@ index e89a296af38c..56425910da9d 100644
  	}
  
  	if (saddr) {
-@@ -241,7 +695,7 @@ static void mctp_pcie_vdm_net_setup(struct net_device *ndev)
+@@ -238,18 +695,17 @@ static void mctp_pcie_vdm_net_setup(struct net_device *ndev)
  	ndev->min_mtu = MCTP_PCIE_VDM_MIN_MTU;
  	ndev->max_mtu = MCTP_PCIE_VDM_MAX_MTU;
  	ndev->tx_queue_len = MCTP_PCIE_VDM_NET_DEV_TX_QUEUE_LEN;
@@ -622,7 +639,20 @@ index e89a296af38c..56425910da9d 100644
  	ndev->hard_header_len = sizeof(struct mctp_pcie_vdm_hdr);
  
  	ndev->netdev_ops = &mctp_pcie_vdm_net_ops;
-@@ -272,69 +726,10 @@ static int mctp_pcie_vdm_add_net_dev(struct net_device **dev)
+ 	ndev->header_ops = &mctp_pcie_vdm_net_hdr_ops;
+ }
+ 
+-static int mctp_pcie_vdm_add_net_dev(struct net_device **dev, const char *ifname)
++static int mctp_pcie_vdm_add_net_dev(struct net_device **dev)
+ {
+ 	struct net_device *ndev = alloc_netdev(sizeof(struct mctp_pcie_vdm_dev),
+-					       ifname ? ifname : "mctppci%d",
+-					       NET_NAME_UNKNOWN,
++					       "mctppci%d", NET_NAME_UNKNOWN,
+ 					       mctp_pcie_vdm_net_setup);
+ 
+ 	if (!ndev) {
+@@ -270,104 +726,79 @@ static int mctp_pcie_vdm_add_net_dev(struct net_device **dev, const char *ifname
  	return rc;
  }
  
@@ -665,12 +695,9 @@ index e89a296af38c..56425910da9d 100644
 -
 -		cb = __mctp_cb(skb);
 -		cb->halen = 3; // route type | bdf address
--		cb->haddr[0] = vdm_hdr->route_type;
--		// address is also converted to little-endian, but we want to keep it as big-endian
--		// because kernel network layer assumes address in big-endian format
--		cb->haddr[1] = vdm_hdr->pci_req_id & 0xFF;
--		cb->haddr[2] = vdm_hdr->pci_req_id >> 8;
--
+-		cb->haddr[0] = vdm_hdr->route_type & GENMASK(2, 0);
+-		cb->haddr[1] = vdm_hdr->pci_req_id >> 8;
+-		cb->haddr[2] = vdm_hdr->pci_req_id & 0xFF;
 -		net_status = netif_rx(skb);
 -		if (net_status == NET_RX_SUCCESS) {
 -			stats->rx_packets++;
@@ -685,7 +712,8 @@ index e89a296af38c..56425910da9d 100644
 -}
 -
 -struct net_device *mctp_pcie_vdm_add_dev(struct device *dev,
--					 const struct mctp_pcie_vdm_ops *ops)
+-					 const struct mctp_pcie_vdm_ops *ops,
+-					 const char *ifname)
 +struct mctp_pcie_vdm_dev *mctp_pcie_vdm_add_dev(struct device *dev,
 +						const struct mctp_pcie_vdm_ops *ops)
  {
@@ -693,8 +721,10 @@ index e89a296af38c..56425910da9d 100644
 -	struct mctp_pcie_vdm_dev *vdm_dev;
  	int rc;
  
- 	rc = mctp_pcie_vdm_add_net_dev(&ndev);
-@@ -343,21 +738,67 @@ struct net_device *mctp_pcie_vdm_add_dev(struct device *dev,
+-	rc = mctp_pcie_vdm_add_net_dev(&ndev, ifname);
++	rc = mctp_pcie_vdm_add_net_dev(&ndev);
+ 	if (rc) {
+ 		pr_err("%s: failed to add net device\n", __func__);
  		return ERR_PTR(rc);
  	}
  
@@ -734,9 +764,13 @@ index e89a296af38c..56425910da9d 100644
  	}
  }
  EXPORT_SYMBOL_GPL(mctp_pcie_vdm_remove_dev);
-+
+ 
+-void mctp_pcie_vdm_set_carrier(struct net_device *ndev, bool up)
 +void mctp_pcie_vdm_notify_rx(struct mctp_pcie_vdm_dev *vdm_dev)
-+{
+ {
+-	if (!ndev) {
+-		pr_err("%s: ndev is NULL\n", __func__);
+-		return;
 +	queue_work(mctp_pcie_vdm_wq, &vdm_dev->rx_work);
 +}
 +EXPORT_SYMBOL_GPL(mctp_pcie_vdm_notify_rx);
@@ -747,10 +781,15 @@ index e89a296af38c..56425910da9d 100644
 +	if (!mctp_pcie_vdm_wq) {
 +		pr_err("Failed to create mctp pcie vdm workqueue\n");
 +		return -ENOMEM;
-+	}
-+
+ 	}
+ 
+-	if (up)
+-		netif_carrier_on(ndev);
+-	else
+-		netif_carrier_off(ndev);
 +	return 0;
-+}
+ }
+-EXPORT_SYMBOL_GPL(mctp_pcie_vdm_set_carrier);
 +
 +static __exit void mctp_pcie_vdm_mod_exit(void)
 +{
@@ -769,83 +808,104 @@ index e89a296af38c..56425910da9d 100644
 +MODULE_LICENSE("GPL");
 +MODULE_AUTHOR("YH <yh_chung@aspeedtech.com>");
 diff --git a/drivers/soc/aspeed/aspeed-mctp.c b/drivers/soc/aspeed/aspeed-mctp.c
-index 034cc3af3a05..d27008f2b7b1 100644
+index 2bd6de53b..3610ef798 100644
 --- a/drivers/soc/aspeed/aspeed-mctp.c
 +++ b/drivers/soc/aspeed/aspeed-mctp.c
-@@ -331,7 +331,8 @@ struct aspeed_mctp {
+@@ -336,7 +336,8 @@ struct aspeed_mctp {
  	struct delayed_work rx_det_dwork;
  	u32 rx_det_period_us;
- #ifdef CONFIG_MCTP_TRANSPORT_PCIE_VDM
+ #if IS_ENABLED(CONFIG_MCTP_TRANSPORT_PCIE_VDM)
 -	struct net_device *ndev;
-+	/* MCTP PCIe VDM device */
++	/* MCTP PCIe VDM device (legacy transport API) */
 +	struct mctp_pcie_vdm_dev *vdm_dev;
+ 	bool pcie_vdm_enabled;
  #endif
  };
- 
-@@ -792,7 +793,7 @@ static void aspeed_mctp_dispatch_packet(struct aspeed_mctp *priv,
+@@ -775,7 +776,7 @@ static void aspeed_mctp_dispatch_packet(struct aspeed_mctp *priv,
  			wake_up_all(&client->wait_queue);
  		}
- #ifdef CONFIG_MCTP_TRANSPORT_PCIE_VDM
+ #if IS_ENABLED(CONFIG_MCTP_TRANSPORT_PCIE_VDM)
 -		mctp_pcie_vdm_receive_packet(priv->ndev);
 +		mctp_pcie_vdm_notify_rx(priv->vdm_dev);
  #endif
  		aspeed_mctp_client_put(client);
  	} else {
-@@ -2514,19 +2515,18 @@ static int aspeed_mctp_probe(struct platform_device *pdev)
- 	}
+@@ -2022,19 +2023,17 @@ static const struct mctp_pcie_vdm_ops aspeed_mctp_pcie_vdm_ops = {
  
- #ifdef CONFIG_MCTP_TRANSPORT_PCIE_VDM
+ static void aspeed_mctp_pcie_vdm_register(struct aspeed_mctp *priv)
+ {
 -	struct net_device *ndev;
 +	struct mctp_pcie_vdm_dev *vdm_dev;
  	struct mctp_client *client;
+-	char ifname[IFNAMSIZ];
  
  	/** use priv's default client to send/receive mctp packets */
  	client = aspeed_mctp_create_client(priv);
  	aspeed_mctp_register_default_handler(client);
  
--	ndev = mctp_pcie_vdm_add_dev(priv->dev, &aspeed_mctp_pcie_vdm_ops);
--	if (IS_ERR(ndev)) {
+-	snprintf(ifname, IFNAMSIZ, "mctppci%d", priv->dev_id);
+-	ndev = mctp_pcie_vdm_add_dev(priv->dev, &aspeed_mctp_pcie_vdm_ops, ifname);
+-	if (IS_ERR(ndev))
 -		dev_err(priv->dev, "Failed to add mctp pcie vdm device Err %ld\n", PTR_ERR(ndev));
--		goto out_drv;
-+	vdm_dev = mctp_pcie_vdm_add_dev(priv->dev, &aspeed_mctp_pcie_vdm_ops);
-+	if (IS_ERR(vdm_dev)) {
-+		dev_err(priv->dev, "Failed to add mctp pcie vdm device Err %ld\n", PTR_ERR(vdm_dev));
- 	}
 -	priv->ndev = ndev;
++	vdm_dev = mctp_pcie_vdm_add_dev(priv->dev, &aspeed_mctp_pcie_vdm_ops);
++	if (IS_ERR(vdm_dev))
++		dev_err(priv->dev, "Failed to add mctp pcie vdm device Err %ld\n", PTR_ERR(vdm_dev));
 +	priv->vdm_dev = vdm_dev;
+ }
+ 
  #endif
+@@ -2134,15 +2133,9 @@ static void aspeed_mctp_pcie_setup(struct aspeed_mctp *priv)
+ 		}
+ 		aspeed_mctp_rx_trigger(&priv->rx);
+ 		aspeed_mctp_send_pcie_uevent(kobj, true);
+-#if IS_ENABLED(CONFIG_MCTP_TRANSPORT_PCIE_VDM)
+-		mctp_pcie_vdm_set_carrier(priv->ndev, true);
+-#endif
+ 	} else {
+ 		schedule_delayed_work(&priv->pcie.rst_dwork,
+ 				      msecs_to_jiffies(1000));
+-#if IS_ENABLED(CONFIG_MCTP_TRANSPORT_PCIE_VDM)
+-		mctp_pcie_vdm_set_carrier(priv->ndev, false);
+-#endif
+ 	}
+ }
  
- 	ret = aspeed_mctp_dma_init(priv);
-@@ -2584,7 +2584,7 @@ static void aspeed_mctp_remove(struct platform_device *pdev)
- 	struct aspeed_mctp *priv = platform_get_drvdata(pdev);
+@@ -2591,7 +2584,7 @@ static void aspeed_mctp_remove(struct platform_device *pdev)
  
- #ifdef CONFIG_MCTP_TRANSPORT_PCIE_VDM
--	mctp_pcie_vdm_remove_dev(priv->ndev);
-+	mctp_pcie_vdm_remove_dev(priv->vdm_dev);
+ #if IS_ENABLED(CONFIG_MCTP_TRANSPORT_PCIE_VDM)
+ 	if (priv->pcie_vdm_enabled) {
+-		mctp_pcie_vdm_remove_dev(priv->ndev);
++		mctp_pcie_vdm_remove_dev(priv->vdm_dev);
+ 		priv->pcie_vdm_enabled = false;
+ 	}
  #endif
- 
- 	platform_device_unregister(priv->peci_mctp);
 diff --git a/include/linux/mctp-pcie-vdm.h b/include/linux/mctp-pcie-vdm.h
-index 25fac3499fc5..da3fad7929b2 100644
+index 54d0ad7f9..da3fad792 100644
 --- a/include/linux/mctp-pcie-vdm.h
 +++ b/include/linux/mctp-pcie-vdm.h
-@@ -11,7 +11,7 @@
+@@ -9,10 +9,9 @@
+ #define __LINUX_MCTP_PCIE_VDM_H
+ 
  #include <linux/device.h>
+-#include <linux/if.h>
  #include <linux/notifier.h>
  
--#ifdef CONFIG_MCTP_TRANSPORT_PCIE_VDM
+-#if IS_ENABLED(CONFIG_MCTP_TRANSPORT_PCIE_VDM)
 +struct mctp_pcie_vdm_dev;
  
  /**
   * @send_packet: referenced to send packets with PCIe VDM header packed.
-@@ -27,10 +27,16 @@ struct mctp_pcie_vdm_ops {
+@@ -28,12 +27,16 @@ struct mctp_pcie_vdm_ops {
  	void (*uninit)(struct device *dev);
  };
  
 -struct net_device *mctp_pcie_vdm_add_dev(struct device *dev,
--					 const struct mctp_pcie_vdm_ops *ops);
+-					 const struct mctp_pcie_vdm_ops *ops,
+-					 const char *ifname);
 -void mctp_pcie_vdm_receive_packet(struct net_device *ndev);
 -void mctp_pcie_vdm_remove_dev(struct net_device *ndev);
+-void mctp_pcie_vdm_set_carrier(struct net_device *ndev, bool up);
 +struct mctp_pcie_vdm_dev *mctp_pcie_vdm_add_dev(struct device *dev,
 +						const struct mctp_pcie_vdm_ops *ops);
 +void mctp_pcie_vdm_remove_dev(struct mctp_pcie_vdm_dev *vdm_dev);
@@ -862,7 +922,7 @@ index 25fac3499fc5..da3fad7929b2 100644
 +
 +#endif	 /* __LINUX_MCTP_PCIE_VDM_H */
 diff --git a/net/mctp/route.c b/net/mctp/route.c
-index 2bb080ed57d6..7dd5c695f39a 100644
+index 2bb080ed5..7dd5c695f 100644
 --- a/net/mctp/route.c
 +++ b/net/mctp/route.c
 @@ -1317,6 +1317,10 @@ static int mctp_pkttype_receive(struct sk_buff *skb, struct net_device *dev,
@@ -876,6 +936,3 @@ index 2bb080ed57d6..7dd5c695f39a 100644
  	if (rc)
  		goto err_drop;
  
--- 
-2.45.2
-

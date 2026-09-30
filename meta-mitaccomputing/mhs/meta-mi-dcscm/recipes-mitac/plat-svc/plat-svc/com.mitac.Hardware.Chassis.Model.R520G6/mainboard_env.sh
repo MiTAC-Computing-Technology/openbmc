@@ -42,8 +42,11 @@ action_keep_minimum_cooling () {
 }
 
 action_set_crt_to_host () {
+    current_val=$(cat /sys/bus/platform/drivers/aspeed_gfx/1e6e6000.display/dac_mux)
+    if [ "$current_val" -ne 0 ]; then
         echo "Switch ownership of VGA/DP output to host."
         echo 0 >/sys/bus/platform/drivers/aspeed_gfx/1e6e6000.display/dac_mux
+    fi
 }
 
 action_power_transition_off () {

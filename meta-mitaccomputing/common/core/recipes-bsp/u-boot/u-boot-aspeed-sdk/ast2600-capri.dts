@@ -167,7 +167,7 @@ Disable this function in U-Boot as workaround. Keep this information for further
 };
 */
 
-&pcie_bridge {
+&pcie0 {
 	status = "okay";
 };
 

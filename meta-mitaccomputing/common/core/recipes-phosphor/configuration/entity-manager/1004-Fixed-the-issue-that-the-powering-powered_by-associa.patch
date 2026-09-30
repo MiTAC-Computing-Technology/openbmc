@@ -1,0 +1,35 @@
+From 843b9d3d5a38ff98050b2135287638db700758ad Mon Sep 17 00:00:00 2001
+From: Jian-Ming Wang <jian.ming.wang@mitaccomputing.com>
+Date: Thu, 4 Jun 2026 04:07:06 +0000
+Subject: [PATCH 1/1] Fixed the issue that the powering/powered_by association
+ might not be created when upstream and downstream devices are not discovered
+ at the sametime.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/entity_manager/topology.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/entity_manager/topology.cpp b/src/entity_manager/topology.cpp
+index ef03f56..128f96a 100644
+--- a/src/entity_manager/topology.cpp
++++ b/src/entity_manager/topology.cpp
+@@ -79,11 +79,15 @@ std::unordered_map<std::string, std::vector<Association>> Topology::getAssocs(
+                         {
+                             result[upstream].emplace_back(
+                                 "powered_by", "powering", downstream);
++                            result[downstream].emplace_back(
++                                "powering", "powered_by", upstream);
+                         }
+                         if (coolingPaths.contains(downstream))
+                         {
+                             result[upstream].emplace_back(
+                                 "cooled_by", "cooling", downstream);
++                            result[downstream].emplace_back(
++                                "cooling", "cooled_by", upstream);
+                         }
+                     }
+                 }
+-- 
+2.43.0
+

@@ -121,7 +121,7 @@ do_compile() {
                     mctp-driver-mgr.o \
                     power-state-monitor.o
 
-    ln -s libmmpvc.so.${PV} libmmpvc.so
+    ln -sf libmmpvc.so.${PV} libmmpvc.so
 
     ${CXX} ${CFLAGS} ${LDFLAGS} \
         mmpvcd.cpp \

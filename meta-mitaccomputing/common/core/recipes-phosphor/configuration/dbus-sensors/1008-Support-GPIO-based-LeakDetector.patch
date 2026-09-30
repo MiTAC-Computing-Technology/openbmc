@@ -1,0 +1,671 @@
+From b676085c3257000f575100d762ddaa44758a281e Mon Sep 17 00:00:00 2001
+From: Jian-Ming Wang <jian.ming.wang@mitaccomputing.com>
+Date: Wed, 17 Jun 2026 10:57:09 +0000
+Subject: [PATCH 2/2] Support GPIO-based LeakDetector.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ src/leakdetector/LeakDetectionManager.cpp |  34 ++-
+ src/leakdetector/LeakEvents.cpp           |  29 +-
+ src/leakdetector/LeakGPIODetector.cpp     | 342 +++++++++++++++++++++-
+ src/leakdetector/LeakGPIODetector.hpp     |  54 ++++
+ 4 files changed, 442 insertions(+), 17 deletions(-)
+
+diff --git a/src/leakdetector/LeakDetectionManager.cpp b/src/leakdetector/LeakDetectionManager.cpp
+index 5348f5f..18438a4 100644
+--- a/src/leakdetector/LeakDetectionManager.cpp
++++ b/src/leakdetector/LeakDetectionManager.cpp
+@@ -90,10 +90,14 @@ auto DetectionManager::getDetectorConfig(
+             .properties();
+ 
+     config.name = properties.name;
++    debug("getDetectorConfig {NAME}, {TYPE}, {SUBTYPE}, {LOCATION}, {DETECTION}", "NAME",
++          config.name, "TYPE", properties.type, "SUBTYPE", properties.sub_type,
++          "LOCATION", properties.location_code, "DETECTION",
++          properties.detection);
+ 
+     for (const auto& [key, value] : config::validDetectorTypes)
+     {
+-        if (properties.type == key)
++        if (properties.sub_type == key)
+         {
+             config.type = value;
+             break;
+@@ -102,6 +106,19 @@ auto DetectionManager::getDetectorConfig(
+ 
+     config.pinName = properties.pin_name;
+ 
++    if (properties.location_code != "")
++    {
++        config.location = properties.location_code;
++        debug("Setup LocationCode: {LOCATION}", "LOCATION",
++              properties.location_code);
++    }
++
++    if (properties.led != "")
++    {
++        config.LED = properties.led;
++        debug("Found LED config: {LED}", "LED", properties.led);
++    }
++
+     for (const auto& [key, value] : config::validPinPolarity)
+     {
+         if (properties.polarity == key)
+@@ -125,6 +142,18 @@ auto DetectionManager::getDetectorConfig(
+             break;
+         }
+     }
++
++    for (const auto& [key, value] : config::validReactionType)
++    {
++        if (properties.reaction_type == key)
++        {
++            config.reactionType = value;
++            debug("Found ReactionType: {TYPE}", "TYPE",
++                  properties.reaction_type);
++            break;
++        }
++    }
++
+     if (config.level == config::DetectorLevel::unknown)
+     {
+         error("Invalid level {LEVEL} for {NAME}", "LEVEL", properties.level,
+@@ -132,6 +161,9 @@ auto DetectionManager::getDetectorConfig(
+         co_return std::nullopt;
+     }
+ 
++    config.parentInventoryPath =
++        std::filesystem::path(objectPath.str).parent_path().string();
++
+     debug("Detector config: {NAME} {PIN_NAME} {POLARITY} {LEVEL}", "NAME",
+           config.name, "PIN_NAME", config.pinName, "POLARITY", config.polarity,
+           "LEVEL", config.level);
+diff --git a/src/leakdetector/LeakEvents.cpp b/src/leakdetector/LeakEvents.cpp
+index e3755a7..c68e54a 100644
+--- a/src/leakdetector/LeakEvents.cpp
++++ b/src/leakdetector/LeakEvents.cpp
+@@ -21,6 +21,8 @@ auto Events::generateLeakEvent(sdbusplus::message::object_path detectorPath,
+     -> sdbusplus::async::task<>
+ {
+     auto eventName = std::make_tuple(detectorPath.str, level);
++    std::filesystem::path p(detectorPath.str);
++    const std::string detectorID = p.filename().string();
+ 
+     // NOLINTNEXTLINE(clang-analyzer-core.uninitialized.Branch)
+     if (state == DetectorStateIntf::DetectorState::Normal)
+@@ -28,12 +30,20 @@ auto Events::generateLeakEvent(sdbusplus::message::object_path detectorPath,
+         auto pendingEvent = pendingEvents.find(eventName);
+         if (pendingEvent != pendingEvents.end())
+         {
++            /*
+             co_await lg2::resolve(ctx, pendingEvent->second);
+ 
+             using DetectorNormal = sdbusplus::event::xyz::openbmc_project::
+                 state::leak::Detector::LeakDetectedNormal;
+             co_await lg2::commit(ctx,
+                                  DetectorNormal("DETECTOR_NAME", detectorPath));
++            */
++            const std::string msgId = "Environmental.1.3.LeakDetectedNormal";
++            const std::string eventId = "LeakDetectedNormal";
++            lg2::info("'{EVENT}' deassert", "EVENT", eventId,
++                                     "REDFISH_MESSAGE_ID", msgId,
++                                     "REDFISH_MESSAGE_ARGS",
++                                     detectorID);
+ 
+             pendingEvents.erase(eventName);
+         }
+@@ -46,17 +56,34 @@ auto Events::generateLeakEvent(sdbusplus::message::object_path detectorPath,
+ 
+     if (level == config::DetectorLevel::critical)
+     {
++        /*
++        Keep this for "resolveable log" mechanism.
+         eventPath = co_await lg2::commit(
+             ctx,
+             error_intf::LeakDetectedCritical("DETECTOR_NAME", detectorPath));
+-        error("Critical leak detected for {PATH}", "PATH", detectorPath);
++        warning("Warning leak detected for {PATH}", "PATH", detectorPath);
++        */
++        const std::string msgId = "Environmental.1.3.LeakDetectedCritical";
++        const std::string eventId = "LeakDetectedCritical";
++        lg2::error("'{EVENT}' assert", "EVENT", eventId,
++                                 "REDFISH_MESSAGE_ID", msgId,
++                                 "REDFISH_MESSAGE_ARGS",
++                                 detectorID);
+     }
+     else
+     {
++        /*
+         eventPath = co_await lg2::commit(
+             ctx,
+             error_intf::LeakDetectedWarning("DETECTOR_NAME", detectorPath));
+         warning("Warning leak detected for {PATH}", "PATH", detectorPath);
++        */
++        const std::string msgId = "Environmental.1.3.LeakDetectedWarning";
++        const std::string eventId = "LeakDetectedWarning";
++        lg2::warning("'{EVENT}' assert", "EVENT", eventId,
++                                 "REDFISH_MESSAGE_ID", msgId,
++                                 "REDFISH_MESSAGE_ARGS",
++                                 detectorID);
+     }
+     pendingEvents[eventName] = eventPath;
+ }
+diff --git a/src/leakdetector/LeakGPIODetector.cpp b/src/leakdetector/LeakGPIODetector.cpp
+index f21d1b5..fa3cc71 100644
+--- a/src/leakdetector/LeakGPIODetector.cpp
++++ b/src/leakdetector/LeakGPIODetector.cpp
+@@ -2,12 +2,17 @@
+ 
+ #include "LeakEvents.hpp"
+ #include "SystemdInterface.hpp"
++#include "Utils.hpp"
+ 
++#include <nlohmann/json.hpp>
+ #include <sdbusplus/async.hpp>
+ #include <sdbusplus/message/native_types.hpp>
+ 
+ #include <array>
++#include <filesystem>
++#include <fstream>
+ #include <functional>
++#include <iostream>
+ #include <string>
+ #include <string_view>
+ #include <utility>
+@@ -28,6 +33,86 @@ static constexpr std::array<std::pair<config::DetectorLevel, std::string_view>,
+ 
+ } // namespace config
+ 
++using json = nlohmann::json;
++namespace fs = std::filesystem;
++
++SettingStorage::SettingStorage(const std::string& path,
++                               const std::string& interface) :
++    _path(path), _interface(interface)
++{
++    fs::path filePath(_path);
++    fs::path parentDir = filePath.parent_path();
++    if (!parentDir.empty() && !fs::exists(parentDir))
++    {
++        fs::create_directories(parentDir);
++    }
++
++    std::ifstream infile(_path);
++    debug("Create config at {PATH}", "PATH", _path);
++    if (!infile.good())
++    {
++        std::ofstream outfile(_path);
++        outfile << "{}" << std::endl;
++    }
++}
++
++std::optional<SettingStorage::PropertyValue> SettingStorage::get_property(
++    const std::string& propName)
++{
++    std::ifstream infile(_path);
++    if (!infile.is_open())
++    {
++        return std::nullopt; // File missing? Return empty optional
++    }
++
++    json data;
++    infile >> data;
++    infile.close();
++
++    if (!data.contains(_interface) || !data[_interface].contains(propName))
++    {
++        return std::nullopt; // Property missing? Return empty optional
++    }
++
++    auto jsonVal = data[_interface][propName];
++
++    if (jsonVal.is_number_integer())
++        return jsonVal.get<int>();
++    if (jsonVal.is_number_float())
++        return jsonVal.get<double>();
++    if (jsonVal.is_boolean())
++        return jsonVal.get<bool>();
++    if (jsonVal.is_string())
++        return jsonVal.get<std::string>();
++
++    return std::nullopt; // Unsupported type
++}
++
++void SettingStorage::set_property(const std::string& propName,
++                                  const PropertyValue& value)
++{
++    constexpr std::size_t jsonIndentSpaces = 4;
++    json data;
++    std::ifstream infile(_path);
++    if (infile.is_open())
++    {
++        infile >> data;
++        infile.close();
++    }
++
++    std::visit([&](const auto& arg) { data[_interface][propName] = arg; },
++               value);
++
++    std::ofstream outfile(_path);
++    if (!outfile.is_open())
++    {
++        throw std::runtime_error("Could not open settings file for writing.");
++    }
++
++    outfile << data.dump(jsonIndentSpaces);
++    outfile.close();
++}
++
+ static auto getObjectPath(const std::string& detectorName)
+     -> sdbusplus::message::object_path
+ {
+@@ -42,14 +127,196 @@ GPIODetector::GPIODetector(sdbusplus::async::context& ctx, Events& leakEvents,
+     leakEvents(leakEvents), config(config),
+     gpioInterface(ctx, config.name, config.pinName,
+                   (config.polarity == config::PinPolarity::activeLow),
+-                  std::bind_front(&GPIODetector::updateGPIOStateAsync, this))
++                  ((config.detection == leak::config::Detection::Eventing)
++                       ? gpio::GPIO_DETECTION::eventing
++                       : gpio::GPIO_DETECTION::polling),
++                  std::bind_front(&GPIODetector::updateGPIOStateAsync, this)),
++    settingStorage("/var/lib/GPIODetector/" + config.name + "." +
++                       config.pinName + ".json",
++                   "xyz.openbmc_project.State.Leak.Detector")
++{
++    initLeakDetectorSetting();
++    ctx.spawn(gpioInterface.start());
++    ctx.spawn(monitorPropertyChange());
++
++    debug("Created leak detector {NAME}, {TYPE}", "NAME", config.name, "TYPE",
++          config.type);
++}
++
++bool GPIODetector::initLeakDetectorSetting()
+ {
+     pretty_name<false>(config.name);
+     type<false>(config.type);
+ 
+-    ctx.spawn(gpioInterface.start());
++    if (config.level == config::DetectorLevel::critical)
++    {
++        const std::string propName = "CriticalReactionType";
++        auto settingInNVStorage = settingStorage.get_property(propName);
++        if (settingInNVStorage.has_value())
++        {
++            this->config.reactionType = Detector::convertReactionTypeFromString(
++                std::get<std::string>(settingInNVStorage.value()));
++        }
++        else
++        {
++            settingStorage.set_property(
++                propName,
++                Detector::convertReactionTypeToString(config.reactionType));
++        }
++
++        if ((config.reactionType == Detector::ReactionType::ForceOff) ||
++            (config.reactionType == Detector::ReactionType::GracefulShutdown))
++            critical_reaction_type<false>(config.reactionType);
++    }
++    else if (config.level == config::DetectorLevel::warning)
++    {
++        if ((config.reactionType == Detector::ReactionType::ForceOff) ||
++            (config.reactionType == Detector::ReactionType::GracefulShutdown))
++            warning_reaction_type<false>(config.reactionType);
++    }
++    Detector::emit_added();
++
++    createAssociations();
++    if (config.location != "")
++        createLocationCode();
++
++    return true;
++}
++
++auto GPIODetector::createAssociations() -> void
++{
++    using association_t = std::tuple<std::string, std::string, std::string>;
++    using association_list_t = std::vector<association_t>;
++    association_list_t associationList;
++
++    association_t association = {"monitoring", "monitored_by",
++                                 config.parentInventoryPath};
++
++    associationList.emplace_back(association);
++
++    associations(associationList);
+ 
+-    debug("Created leak detector {NAME}", "NAME", config.name);
++    Definitions::emit_added();
++}
++
++auto GPIODetector::createLocationCode() -> void
++{
++    LocationCode::location_code(config.location);
++    LocationCode::emit_added();
++}
++
++auto GPIODetector::setFruFaultLED(bool active)
++    -> sdbusplus::async::task<>
++{
++    const std::string LedPath =
++        "/xyz/openbmc_project/led/groups/" +
++        ((config.LED == "") ? LEAK_DETECTOR_FAULT_GROUP_LED : config.LED);
++    auto ledMgrProxy = sdbusplus::async::proxy()
++                           .service("xyz.openbmc_project.LED.GroupManager")
++                           .path(LedPath)
++                           .interface("org.freedesktop.DBus.Properties");
++    try
++    {
++        info("Turned {LED} On", "LED", LedPath);
++        co_await ledMgrProxy.call<>(
++            ctx, "Set", "xyz.openbmc_project.Led.Group", "Asserted",
++            std::variant<bool>{active});
++    }
++    catch (const sdbusplus::exception::SdBusError& e)
++    {
++        error("Exception from sdbusplus: {MSG}", "MSG", e.what());
++    }
++    catch (const std::exception& e)
++    {
++        error("Exception: {MSG}", "MSG", e.what());
++    }
++    co_return;
++}
++
++auto GPIODetector::doReactionType()
++    -> sdbusplus::async::task<>
++{
++    // Do ReactionType
++    if (config.reactionType == Detector::ReactionType::ForceOff)
++    {
++        debug("Attempt to Detector::ReactionType::ForceOff");
++        constexpr auto propertyName = "RequestedPowerTransition";
++        constexpr auto interfaceName =
++            "xyz.openbmc_project.State.Chassis";
++        auto chassisSrvProxy =
++            sdbusplus::async::proxy()
++                .service("xyz.openbmc_project.State.Chassis")
++                .path("/xyz/openbmc_project/state/chassis0")
++                .interface(interfaceName);
++        try
++        {
++            co_await chassisSrvProxy.set_property(
++                ctx, propertyName,
++                "xyz.openbmc_project.State.Chassis.Transition.Off");
++
++            std::string severity =
++                (config.level == config::DetectorLevel::critical)
++                    ? "Critical"
++                    : "Warning";
++            const std::string msgId =
++                "MiOBMC.0.1." + severity + "ReactionShutdown";
++            const std::string eventId = severity + "ReactionShutdown";
++            std::string messageArgs = std::format(
++                "{},{},{}", "force off", "LeakDetector", config.name);
++            lg2::warning("'{EVENT}' assert", "EVENT", eventId,
++                         "REDFISH_MESSAGE_ID", msgId,
++                         "REDFISH_MESSAGE_ARGS", messageArgs);
++        }
++        catch (const sdbusplus::exception::SdBusError& e)
++        {
++            error("Exception from sdbusplus: {MSG}", "MSG", e.what());
++        }
++        catch (const std::exception& e)
++        {
++            error("Exception: {MSG}", "MSG", e.what());
++        }
++    }
++    else if (config.reactionType ==
++             Detector::ReactionType::GracefulShutdown)
++    {
++        debug("Attempt to Detector::ReactionType::GracefulShutdown");
++        constexpr auto propertyName = "RequestedHostTransition";
++        constexpr auto interfaceName = "xyz.openbmc_project.State.Host";
++        auto hostSrvProxy =
++            sdbusplus::async::proxy()
++                .service("xyz.openbmc_project.State.Host")
++                .path("/xyz/openbmc_project/state/host0")
++                .interface(interfaceName);
++        try
++        {
++            co_await hostSrvProxy.set_property(
++                ctx, propertyName,
++                "xyz.openbmc_project.State.Host.Transition.Off");
++
++            std::string severity =
++                (config.level == config::DetectorLevel::critical)
++                    ? "Critical"
++                    : "Warning";
++            const std::string msgId =
++                "MiOBMC.0.1." + severity + "ReactionShutdown";
++            const std::string eventId = severity + "ReactionShutdown";
++            std::string messageArgs =
++                std::format("{},{},{}", "graceful shutdown",
++                            "LeakDetector", config.name);
++            lg2::warning("'{EVENT}' assert", "EVENT", eventId,
++                         "REDFISH_MESSAGE_ID", msgId,
++                         "REDFISH_MESSAGE_ARGS", messageArgs);
++        }
++        catch (const sdbusplus::exception::SdBusError& e)
++        {
++            error("Exception from sdbusplus: {MSG}", "MSG", e.what());
++        }
++        catch (const std::exception& e)
++        {
++            error("Exception: {MSG}", "MSG", e.what());
++        }
++    }
++    co_return;
+ }
+ 
+ auto GPIODetector::updateGPIOStateAsync(bool gpioState)
+@@ -58,8 +325,8 @@ auto GPIODetector::updateGPIOStateAsync(bool gpioState)
+     auto newState = gpioState ? DetectorIntf::DetectorState::Abnormal
+                               : DetectorIntf::DetectorState::Normal;
+ 
+-    debug("Updating detector {DETECTOR} state to {STATE}", "DETECTOR",
+-          config.name, "STATE", newState);
++    info("Updating detector {DETECTOR} state to {STATE}", "DETECTOR",
++         config.name, "STATE", newState);
+ 
+     if (newState != state_)
+     {
+@@ -69,21 +336,66 @@ auto GPIODetector::updateGPIOStateAsync(bool gpioState)
+                                               state_, config.level);
+         if (state_ != DetectorIntf::DetectorState::Normal)
+         {
+-            for (const auto& [level, serviceSuffix] : config::leakActionTargets)
++            // LED Control
++            co_await setFruFaultLED(true);
++            co_await doReactionType();
++        }
++        else
++        {
++            // Back to Normal.
++            co_await setFruFaultLED(false);
++        }
++    }
++    co_return;
++}
++
++auto GPIODetector::monitorPropertyChange() -> sdbusplus::async::task<>
++{
++    auto localMatchRule = sdbusplus::bus::match::rules::propertiesChanged(
++        "/xyz/openbmc_project/state/leak/detector/" +
++            config.name, // Your active state object
++        "xyz.openbmc_project.State.Leak.Detector");
++    sdbusplus::async::match localMatcher(ctx, localMatchRule);
++
++    // Setup a concurrent execution pipeline or loop using select/next hooks
++    while (true)
++    {
++        // For simplicity in a single flow, let's process updates coming from
++        // the local state matcher
++        auto [interfaceName, changedProperties, invalidatedProperties] =
++            co_await localMatcher.next<
++                std::string, std::map<std::string, std::variant<std::string>>,
++                std::vector<std::string>>();
++
++        // Process WarningReactionType changes
++        auto warnIt = changedProperties.find("WarningReactionType");
++        if (warnIt != changedProperties.end())
++        {
++            if (auto valPtr = std::get_if<std::string>(&warnIt->second))
+             {
+-                if (config.level == level)
++                settingStorage.set_property("WarningReactionType", *valPtr);
++                if (config.level == config::DetectorLevel::warning)
+                 {
+-                    auto target = std::string(serviceSuffix) + config.name +
+-                                  ".service";
+-                    debug("Starting systemd target {TARGET}", "TARGET", target);
+-                    co_await systemd::SystemdInterface::startUnit(ctx, target);
+-                    break;
++                    config.reactionType =
++                        Detector::convertReactionTypeFromString(*valPtr);
+                 }
+             }
+         }
+-    }
+ 
+-    co_return;
++        // Process CriticalReactionType changes
++        auto critIt = changedProperties.find("CriticalReactionType");
++        if (critIt != changedProperties.end())
++        {
++            if (auto valPtr = std::get_if<std::string>(&critIt->second))
++            {
++                settingStorage.set_property("CriticalReactionType", *valPtr);
++                if (config.level == config::DetectorLevel::critical)
++                {
++                    config.reactionType =
++                        Detector::convertReactionTypeFromString(*valPtr);
++                }
++            }
++        }
++    }
+ }
+-
+ } // namespace leak
+diff --git a/src/leakdetector/LeakGPIODetector.hpp b/src/leakdetector/LeakGPIODetector.hpp
+index 074e758..49e3de0 100644
+--- a/src/leakdetector/LeakGPIODetector.hpp
++++ b/src/leakdetector/LeakGPIODetector.hpp
+@@ -8,9 +8,11 @@
+ #include <sdbusplus/async/server.hpp>
+ #include <xyz/openbmc_project/Association/Definitions/aserver.hpp>
+ #include <xyz/openbmc_project/Configuration/GPIOLeakDetector/client.hpp>
++#include <xyz/openbmc_project/Inventory/Decorator/LocationCode/aserver.hpp>
+ #include <xyz/openbmc_project/State/Leak/Detector/aserver.hpp>
+ 
+ #include <array>
++#include <optional>
+ #include <string>
+ #include <string_view>
+ #include <utility>
+@@ -19,6 +21,7 @@ PHOSPHOR_LOG2_USING;
+ 
+ namespace leak
+ {
++#define LEAK_DETECTOR_FAULT_GROUP_LED "leakdetector"
+ 
+ class GPIODetector;
+ 
+@@ -28,8 +31,12 @@ using DetectorConfigIntf =
+ using DetectorIntf = sdbusplus::async::server_t<
+     GPIODetector,
+     sdbusplus::aserver::xyz::openbmc_project::association::Definitions,
++    sdbusplus::aserver::xyz::openbmc_project::inventory::decorator::
++        LocationCode,
+     sdbusplus::aserver::xyz::openbmc_project::state::leak::Detector>;
+ 
++using namespace sdbusplus::common::xyz::openbmc_project::state::leak;
++
+ namespace config
+ {
+ 
+@@ -61,6 +68,24 @@ enum class DetectorLevel
+     unknown
+ };
+ 
++/** @brief GPIO Detection type */
++enum class Detection
++{
++    Eventing, // IRQ-based GPIO. Check journal to see if any error from
++              // subscription of the GPIO.
++    Polling,  // Use timer to poll GPIO. This GPIO shall be declared in Device
++              // Tree and list from gpioinfo utility.
++    unknown
++};
++
++/** @brief Polarity name to enum map */
++static constexpr std::array<std::pair<std::string_view, Detector::ReactionType>,
++                            3>
++    validReactionType = {
++        {{"None", Detector::ReactionType::None},
++         {"ForceOff", Detector::ReactionType::ForceOff},
++         {"GracefulShutdown", Detector::ReactionType::GracefulShutdown}}};
++
+ /** @brief Leak detector level name to enum map */
+ static constexpr std::array<std::pair<std::string_view, DetectorLevel>, 2>
+     validDetectorLevel = {{{"Warning", DetectorLevel::warning},
+@@ -73,7 +98,12 @@ struct DetectorConfig
+     DetectorIntf::DetectorType type = DetectorIntf::DetectorType::Unknown;
+     std::string pinName = Defaults::pinName;
+     PinPolarity polarity = PinPolarity::unknown;
++    Detection detection = Detection::Polling;
+     DetectorLevel level = DetectorLevel::unknown;
++    sdbusplus::message::object_path parentInventoryPath;
++    std::string location = "";
++    Detector::ReactionType reactionType = Detector::ReactionType::None;
++    std::string LED = "";
+ 
+     struct Defaults
+     {
+@@ -84,19 +114,43 @@ struct DetectorConfig
+ 
+ }; // namespace config
+ 
++/** @brief SettingStorage keeps the configuration to NV storage.  */
++class SettingStorage
++{
++  public:
++    using PropertyValue = std::variant<int, double, bool, std::string>;
++    SettingStorage(const std::string& path, const std::string& interface);
++    std::optional<PropertyValue> get_property(const std::string& propName);
++    void set_property(const std::string& propName, const PropertyValue& value);
++
++  private:
++    std::string _path;
++    std::string _interface;
++};
++
++/** @brief GPIODetector is kind of LeakDetector. */
+ class GPIODetector : public DetectorIntf
+ {
+   public:
+     explicit GPIODetector(sdbusplus::async::context& ctx, Events& leakEvents,
+                           const config::DetectorConfig& config);
+ 
++    auto createAssociations() -> void;
++    auto createLocationCode() -> void;
+     auto updateGPIOStateAsync(bool gpioState) -> sdbusplus::async::task<>;
++    auto monitorPropertyChange() -> sdbusplus::async::task<>;
+ 
+   private:
+     sdbusplus::async::context& ctx;
+     Events& leakEvents;
+     config::DetectorConfig config;
+     gpio::GPIOInterface gpioInterface;
++
++    SettingStorage settingStorage;
++
++    bool initLeakDetectorSetting();
++    auto setFruFaultLED(bool active) -> sdbusplus::async::task<>;
++    auto doReactionType() -> sdbusplus::async::task<>;
+ };
+ 
+ } // namespace leak
+-- 
+2.43.0
+

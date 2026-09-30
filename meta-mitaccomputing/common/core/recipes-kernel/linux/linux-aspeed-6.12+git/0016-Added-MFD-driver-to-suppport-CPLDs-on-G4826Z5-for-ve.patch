@@ -1,0 +1,720 @@
+From 7205dec1285aadb757ee054050eeabd31cd502ce Mon Sep 17 00:00:00 2001
+From: Jian-Ming Wang <jian.ming.wang@mitaccomputing.com>
+Date: Thu, 4 Jun 2026 01:23:41 +0000
+Subject: [PATCH 1/2] Added MFD driver to suppport CPLDs on G4826Z5 for version
+ information, GPIO expander and Fan control functions.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ drivers/hwmon/mic-cpld-4826.c | 607 ++++++++++++++++++++++++++++++++++
+ drivers/hwmon/mic-cpld-4826.h |  81 +++++
+ 2 files changed, 688 insertions(+)
+ create mode 100644 drivers/hwmon/mic-cpld-4826.c
+ create mode 100644 drivers/hwmon/mic-cpld-4826.h
+
+diff --git a/drivers/hwmon/mic-cpld-4826.c b/drivers/hwmon/mic-cpld-4826.c
+new file mode 100644
+index 000000000000..1d6771f74cf9
+--- /dev/null
++++ b/drivers/hwmon/mic-cpld-4826.c
+@@ -0,0 +1,610 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#include "mic-cpld-4826.h"
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/slab.h>
++#include <linux/i2c.h>
++#include <linux/hwmon.h>
++#include <linux/hwmon-sysfs.h>
++#include <linux/err.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/thermal.h>
++
++static int mic_cpld_4826_write(struct device *dev, enum hwmon_sensor_types type,
++			       u32 attr, int channel, long val);
++
++/*
++ * Support of thermal_cooling_device
++ */
++
++static int cpld_pwm_get_max_state(struct thermal_cooling_device *cdev,
++				  unsigned long *state)
++{
++	struct cpld_pwm_port *port = cdev->devdata;
++
++	*state = port->num_levels - 1;
++	return 0;
++}
++
++static int cpld_pwm_get_cur_state(struct thermal_cooling_device *cdev,
++				  unsigned long *state)
++{
++	struct cpld_pwm_port *port = cdev->devdata;
++	*state = port->cur_state;
++	return 0;
++}
++
++static int cpld_pwm_set_cur_state(struct thermal_cooling_device *cdev,
++				  unsigned long state)
++{
++	struct cpld_pwm_port *port = cdev->devdata;
++	struct mic_cpld_4826_data *priv = port->priv;
++	u32 pwm_val;
++	int ret;
++
++	if (state >= port->num_levels)
++		return -EINVAL;
++
++	pwm_val = port->cooling_levels[state];
++
++	//ret = i2c_smbus_write_byte_data(priv->client, 0x31 + port->channel, pwm_val);
++	ret = mic_cpld_4826_write(&priv->client->dev, hwmon_pwm,
++				  hwmon_pwm_input, port->channel, pwm_val);
++	if (ret < 0)
++		return ret;
++
++	port->cur_state = state;
++	dev_dbg(&priv->client->dev,
++		"PWM channel %d set to level %lu (PWM: %u)\n", port->channel,
++		state, pwm_val);
++
++	return 0;
++}
++
++static const struct thermal_cooling_device_ops cpld_cooling_ops = {
++	.get_max_state = cpld_pwm_get_max_state,
++	.get_cur_state = cpld_pwm_get_cur_state,
++	.set_cur_state = cpld_pwm_set_cur_state,
++};
++
++/*
++ * Support of CPLD Device Unique ID & Firmware Information
++ */
++
++static ssize_t fw_version_show(struct device *dev,
++			       struct device_attribute *attr, char *buf)
++{
++	struct mic_cpld_4826_data *data = dev_get_drvdata(dev);
++	int high, low = 0;
++
++	switch (data->chip_id) {
++	case CPLD_PDB:
++	case CPLD_UBB:
++	case CPLD_PCIE_BAY:
++		const u8 PDB_REG_FW_VER_HIGH = 0x03;
++		const u8 PDB_REG_FW_VER_LOW = 0x04;
++		mutex_lock(&data->lock);
++		high = i2c_smbus_read_byte_data(data->client,
++						PDB_REG_FW_VER_HIGH);
++		low = i2c_smbus_read_byte_data(data->client,
++					       PDB_REG_FW_VER_LOW);
++		mutex_unlock(&data->lock);
++
++		if (high < 0 || low < 0)
++			return -EIO;
++		break;
++	case CPLD_HSBP:
++		const u8 HSBP_REG_FW_VER = 0x20;
++		mutex_lock(&data->lock);
++		low = i2c_smbus_read_byte_data(data->client, HSBP_REG_FW_VER);
++		mutex_unlock(&data->lock);
++
++		if (low < 0)
++			return -EIO;
++	default:
++		dev_err(dev, "Unable to get firmware version.\n");
++		break;
++	}
++
++	return sysfs_emit(buf, "v%d.%02d\n", high, low);
++}
++
++static int get_unique_id(struct device *dev)
++{
++	struct mic_cpld_4826_data *data = dev_get_drvdata(dev);
++	u16 unique_id = 0;
++	int high, low = 0;
++
++	switch (data->chip_id) {
++	case CPLD_PDB:
++	case CPLD_UBB:
++	case CPLD_PCIE_BAY:
++		const u8 PDB_REG_CHIP_ID_HIGH = 0x01;
++		const u8 PDB_REG_CHIP_ID_LOW = 0x02;
++		mutex_lock(&data->lock);
++		high = i2c_smbus_read_byte_data(data->client,
++						PDB_REG_CHIP_ID_HIGH);
++		low = i2c_smbus_read_byte_data(data->client,
++					       PDB_REG_CHIP_ID_LOW);
++		mutex_unlock(&data->lock);
++
++		if (high < 0 || low < 0)
++			return -EIO;
++		break;
++	default:
++		dev_err(dev, "Unable to get chip unique id.\n");
++		break;
++	}
++
++	unique_id = (high << 8) | low;
++	return unique_id;
++}
++
++static ssize_t unique_id_show(struct device *dev, struct device_attribute *attr,
++			      char *buf)
++{
++	u16 unique_id;
++	int ret = get_unique_id(dev);
++	if (ret < 0)
++		return ret;
++
++	unique_id = (u16)ret;
++	return sysfs_emit(buf, "0x%04x\n", unique_id);
++}
++
++static DEVICE_ATTR_RO(fw_version);
++static DEVICE_ATTR_RO(unique_id);
++
++static struct attribute *cpld_attrs[] = {
++	&dev_attr_fw_version.attr,
++	&dev_attr_unique_id.attr,
++	NULL,
++};
++
++static const struct attribute_group cpld_attr_group = {
++	.attrs = cpld_attrs,
++};
++
++/*
++ * Support of GPIO Access
++ */
++
++static int get_reg_id(struct gpio_chip *gc, unsigned int offset)
++{
++	struct device *dev = gc->parent;
++	struct mic_cpld_4826_data *data = dev_get_drvdata(dev);
++	u8 port_num = offset / 8;
++	struct GPIO_DEF_ENTRY gpio_cfg = (data->gpio_cfg)[port_num];
++	return gpio_cfg.reg_id;
++}
++
++static int cpld_gpio_get_direction(struct gpio_chip *gc, unsigned int offset)
++{
++	struct device *dev = gc->parent;
++	struct mic_cpld_4826_data *data = dev_get_drvdata(dev);
++	u8 port_num = offset / 8;
++	u8 port_offset = offset % 8;
++	struct GPIO_DEF_ENTRY gpio_cfg = data->gpio_cfg[port_num];
++	if ((gpio_cfg.output_mask & BIT(port_offset)) != 0)
++		return GPIO_LINE_DIRECTION_OUT;
++	else
++		return GPIO_LINE_DIRECTION_IN;
++}
++
++static int cpld_gpio_get(struct gpio_chip *gc, unsigned int offset)
++{
++	struct mic_cpld_4826_data *data = gpiochip_get_data(gc);
++	int ret;
++	u8 reg_id = get_reg_id(gc, offset);
++	u8 port_offset = offset % 8;
++
++	mutex_lock(&data->lock);
++	ret = i2c_smbus_read_byte_data(data->client, reg_id);
++	mutex_unlock(&data->lock);
++
++	if (ret < 0)
++		return ret;
++
++	return !!(ret & BIT(port_offset));
++}
++
++static void cpld_gpio_set(struct gpio_chip *gc, unsigned int offset, int value)
++{
++	struct mic_cpld_4826_data *data = gpiochip_get_data(gc);
++	int ret;
++
++	u8 reg_id = get_reg_id(gc, offset);
++	u8 port_offset = offset % 8;
++
++	mutex_lock(&data->lock);
++	ret = i2c_smbus_read_byte_data(data->client, reg_id);
++	if (ret >= 0) {
++		if (value)
++			ret |= BIT(port_offset);
++		else
++			ret &= ~BIT(port_offset);
++
++		i2c_smbus_write_byte_data(data->client, reg_id, ret);
++	}
++	mutex_unlock(&data->lock);
++}
++
++static int cpld_gpio_direction_output(struct gpio_chip *gc, unsigned int offset,
++				      int value)
++{
++	cpld_gpio_set(gc, offset, value);
++	return 0;
++}
++
++/*
++ * Support of HWMON 
++ */
++
++static int mic_cpld_4826_read(struct device *dev, enum hwmon_sensor_types type,
++			      u32 attr, int channel, long *val)
++{
++	struct mic_cpld_4826_data *data = dev_get_drvdata(dev);
++	struct i2c_client *client = data->client;
++	int reg, ret;
++
++	switch (type) {
++	case hwmon_pwm:
++		if (attr == hwmon_pwm_input) {
++			reg = REG_PWM(channel);
++			ret = i2c_smbus_read_byte_data(client, reg);
++			if (ret < 0)
++				return ret;
++
++			long pwm = (ret * 255) / 100;
++			*val = pwm;
++			return 0;
++		}
++		break;
++
++	case hwmon_fan:
++
++		if (attr == hwmon_fan_input) {
++			if (channel >= 0 && channel <= 15) {
++				reg = REG_TACH_1(channel);
++			} else if (channel >= 16 && channel <= 31) {
++				reg = REG_TACH_2(channel);
++			} else {
++				return -EINVAL;
++			}
++
++			ret = i2c_smbus_read_byte_data(client, reg);
++			if (ret < 0)
++				return ret;
++
++			*val = ret * 40;
++			return 0;
++		}
++		break;
++
++	case hwmon_humidity:
++		if (attr == hwmon_humidity_input) {
++			ret = i2c_smbus_read_byte_data(client, REG_LEAKAGE);
++			if (ret < 0)
++				return ret;
++
++			*val = ret;
++			return 0;
++		}
++		break;
++
++	default:
++		break;
++	}
++	return -EOPNOTSUPP;
++}
++
++static int mic_cpld_4826_write(struct device *dev, enum hwmon_sensor_types type,
++			       u32 attr, int channel, long val)
++{
++	struct mic_cpld_4826_data *data = dev_get_drvdata(dev);
++	struct i2c_client *client = data->client;
++	int reg;
++
++	switch (type) {
++	case hwmon_pwm:
++		if (attr == hwmon_pwm_input) {
++			if (val < 0 || val > 255)
++				return -EINVAL;
++			reg = REG_PWM(channel);
++			return i2c_smbus_write_byte_data(client, reg,
++							 (val * 100) / 255);
++		}
++		break;
++	default:
++		break;
++	}
++	return -EOPNOTSUPP;
++}
++
++static umode_t mic_cpld_4826_is_visible(const void *drvdata,
++					enum hwmon_sensor_types type, u32 attr,
++					int channel)
++{
++	switch (type) {
++	case hwmon_pwm:
++		if (attr == hwmon_pwm_input && channel >= 0 && channel <= 8)
++			return 0644; // RW
++		break;
++	case hwmon_fan:
++		if (attr == hwmon_fan_input) {
++			if ((channel >= 0 && channel <= 31))
++				return 0444; // RO
++		}
++		break;
++	case hwmon_humidity:
++		if (attr == hwmon_humidity_input && channel == 0)
++			return 0444; // RO
++		break;
++	default:
++		break;
++	}
++	return 0;
++}
++
++static const u32 mic_cpld_4826_pwm_config[] = { HWMON_PWM_INPUT, // pwm1
++						HWMON_PWM_INPUT, // pwm2
++						HWMON_PWM_INPUT, // pwm3
++						HWMON_PWM_INPUT, // pwm4
++						HWMON_PWM_INPUT, // pwm5
++						HWMON_PWM_INPUT, // pwm6
++						HWMON_PWM_INPUT, // pwm7
++						HWMON_PWM_INPUT, // pwm8
++						0 };
++
++static const u32 mic_cpld_4826_fan_config[] = { HWMON_F_INPUT, // fan1 (idx 0)
++						HWMON_F_INPUT, // fan2 (idx 1)
++						HWMON_F_INPUT, // fan3 (idx 2)
++						HWMON_F_INPUT, // fan4 (idx 3)
++						HWMON_F_INPUT, // fan5 (idx 4)
++						HWMON_F_INPUT, // fan6 (idx 5)
++						HWMON_F_INPUT, // fan7 (idx 6)
++						HWMON_F_INPUT, // fan8 (idx 7)
++						HWMON_F_INPUT, // fan9 (idx 8)
++						HWMON_F_INPUT, // fan10 (idx 9)
++						HWMON_F_INPUT, // fan11 (idx 10)
++						HWMON_F_INPUT, // fan12 (idx 11
++						HWMON_F_INPUT, // fan13 (idx 12
++						HWMON_F_INPUT, // fan14 (idx 13
++						HWMON_F_INPUT, // fan15 (idx 14
++						HWMON_F_INPUT, // fan16 (idx 15)
++						HWMON_F_INPUT, // fan17 (idx 16)
++						HWMON_F_INPUT, // fan18 (idx 17)
++						HWMON_F_INPUT, // fan19 (idx 18)
++						HWMON_F_INPUT, // fan20 (idx 19)
++						HWMON_F_INPUT, // fan21 (idx 20)
++						HWMON_F_INPUT, // fan22 (idx 21)
++						HWMON_F_INPUT, // fan23 (idx 22)
++						HWMON_F_INPUT, // fan24 (idx 23)
++						HWMON_F_INPUT, // fan25 (idx 24)
++						HWMON_F_INPUT, // fan26 (idx 25)
++						HWMON_F_INPUT, // fan27 (idx 26)
++						HWMON_F_INPUT, // fan28 (idx 27)
++						HWMON_F_INPUT, // fan29 (idx 28)
++						HWMON_F_INPUT, // fan30 (idx 29)
++						0 };
++
++static const u32 mic_cpld_4826_humidity_config[] = { HWMON_H_INPUT, 0 };
++
++static const struct hwmon_channel_info pwm_channel = {
++	.type = hwmon_pwm,
++	.config = mic_cpld_4826_pwm_config,
++};
++
++static const struct hwmon_channel_info fan_channel = {
++	.type = hwmon_fan,
++	.config = mic_cpld_4826_fan_config,
++};
++
++// Humidity > 0 if any liquid leakage detection signal triggered.
++static const struct hwmon_channel_info humidity_channel = {
++	.type = hwmon_humidity,
++	.config = mic_cpld_4826_humidity_config,
++};
++
++static const struct hwmon_channel_info *mic_cpld_4826_info[] = {
++	&pwm_channel, &fan_channel, &humidity_channel, NULL
++};
++
++static const struct hwmon_ops mic_cpld_4826_hwmon_ops = {
++	.is_visible = mic_cpld_4826_is_visible,
++	.read = mic_cpld_4826_read,
++	.write = mic_cpld_4826_write,
++};
++
++static const struct hwmon_chip_info mic_cpld_4826_chip_info = {
++	.ops = &mic_cpld_4826_hwmon_ops,
++	.info = mic_cpld_4826_info,
++};
++
++static const struct i2c_device_id mic_cpld_4826_id[] = {
++	{ "mic_cpld_4826", FAN_CTRL_ONLY },
++	{ "cpld-4826-pdb", CPLD_PDB },
++	{ "cpld-4826-ubb", CPLD_UBB },
++	{ "cpld-4826-pcie-bay", CPLD_PCIE_BAY },
++	{ "cpld-4826-hsbp", CPLD_HSBP },
++	{ "cpld-4826-sw", CPLD_SW },
++	{}
++};
++
++static const struct of_device_id cpld_of_match[] = {
++	{ .compatible = "mic,cpld-4826-pdb", .data = (void *)CPLD_PDB },
++	{ .compatible = "mic,cpld-4826-ubb", .data = (void *)CPLD_UBB },
++	{ .compatible = "mic,cpld-4826-pcie-bay",
++	  .data = (void *)CPLD_PCIE_BAY },
++	{ .compatible = "mic,cpld-4826-hsbp", .data = (void *)CPLD_HSBP },
++	{ .compatible = "mic,cpld-4826-sw", .data = (void *)CPLD_SW },
++	{}
++};
++
++static int init_mic_cpld_4826_data(struct mic_cpld_4826_data *data,
++				   enum chips chip_id)
++{
++	if (!data)
++		return -ENOMEM;
++
++	data->chip_id = chip_id;
++	// GPIO setting
++	data->gpio_cfg = NULL;
++	data->gpio_port_num = 0;
++	// HWMON Setting
++	data->enable_hwmon = false;
++
++	switch (data->chip_id) {
++	case CPLD_PDB:
++		data->gpio_cfg = (struct GPIO_DEF_ENTRY *)gpio_cfg_pdb;
++		data->gpio_port_num = ARRAY_SIZE(gpio_cfg_pdb);
++		data->enable_hwmon = true;
++		break;
++	case CPLD_UBB:
++		data->gpio_cfg = (struct GPIO_DEF_ENTRY *)gpio_cfg_ubb;
++		data->gpio_port_num = ARRAY_SIZE(gpio_cfg_ubb);
++		data->enable_hwmon = true;
++		break;
++	case CPLD_HSBP:
++		data->gpio_cfg = (struct GPIO_DEF_ENTRY *)gpio_cfg_hsbp;
++		data->gpio_port_num = ARRAY_SIZE(gpio_cfg_hsbp);
++		data->enable_hwmon = true;
++		break;
++	case CPLD_PCIE_BAY:
++		data->enable_hwmon = true;
++		break;
++	default:
++		// Only support report of version information.
++		break;
++	}
++	return 0;
++}
++
++static int mic_cpld_4826_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct mic_cpld_4826_data *data;
++	struct device *hwmon_dev;
++	struct device_node *child;
++	int ret;
++	enum chips chip_id;
++
++	data = devm_kzalloc(dev, sizeof(struct mic_cpld_4826_data), GFP_KERNEL);
++	if (!data)
++		return -ENOMEM;
++
++	data->client = client;
++	mutex_init(&data->lock);
++	i2c_set_clientdata(client, data);
++
++	ret = devm_device_add_group(dev, &cpld_attr_group);
++	if (ret) {
++		dev_err(dev, "Failed to create sysfs group\n");
++		return ret;
++	}
++
++	if (dev->of_node) {
++		chip_id = (uintptr_t)of_device_get_match_data(dev);
++
++	} else {
++		chip_id = i2c_match_id(mic_cpld_4826_id, client)->driver_data;
++	}
++
++	init_mic_cpld_4826_data(data, chip_id);
++
++	if (data->gpio_cfg) {
++		data->gpio_chip.ngpio = 8 * data->gpio_port_num;
++		data->gpio_chip.label = "cpld-4826-gpio";
++		data->gpio_chip.parent = dev;
++		data->gpio_chip.owner = THIS_MODULE;
++		data->gpio_chip.get_direction = cpld_gpio_get_direction;
++		data->gpio_chip.direction_output = cpld_gpio_direction_output;
++		data->gpio_chip.get = cpld_gpio_get;
++		data->gpio_chip.set = cpld_gpio_set;
++
++		data->gpio_chip.base = -1;
++		data->gpio_chip.can_sleep = true;
++		data->gpio_chip.fwnode = dev_fwnode(dev);
++		ret = devm_gpiochip_add_data(dev, &data->gpio_chip, data);
++		if (ret) {
++			dev_err(dev, "Failed to add gpiochip\n");
++			return ret;
++		}
++	}
++
++	if (data->enable_hwmon) {
++		hwmon_dev = devm_hwmon_device_register_with_info(
++			dev, "mic_cpld_4826_hwmon", data,
++			&mic_cpld_4826_chip_info, NULL);
++		if (IS_ERR(hwmon_dev)) {
++			dev_err(dev, "Failed to register hwmon device\n");
++			return PTR_ERR(hwmon_dev);
++		}
++
++		for_each_child_of_node(dev->of_node, child) {
++			u32 reg;
++
++			if (!of_node_name_prefix(child, "pwm"))
++				continue;
++
++			ret = of_property_read_u32(child, "reg", &reg);
++			if (ret || reg >= MAX_PWM_CHANNELS)
++				continue;
++
++			struct cpld_pwm_port *port = &data->pwm_ports[reg];
++			port->priv = data;
++			port->channel = reg;
++
++			int prop_len = of_property_count_u32_elems(
++				child, "cooling-levels");
++			if (prop_len > 0) {
++				port->num_levels = prop_len;
++				port->cooling_levels = devm_kcalloc(
++					dev, prop_len, sizeof(u32), GFP_KERNEL);
++
++				if (!port->cooling_levels)
++					return -ENOMEM;
++
++				of_property_read_u32_array(child,
++							   "cooling-levels",
++							   port->cooling_levels,
++							   prop_len);
++
++				port->cdev =
++					devm_thermal_of_cooling_device_register(
++						dev, child, child->name, port,
++						&cpld_cooling_ops);
++				if (IS_ERR(port->cdev)) {
++					dev_err(dev,
++						"Failed to register cooling device for PWM %d\n",
++						reg);
++					return PTR_ERR(port->cdev);
++				}
++
++				cpld_pwm_set_cur_state(port->cdev, 1);
++			}
++		}
++	}
++
++	dev_info(dev, "Driver registered successfully\n");
++	return 0;
++}
++
++MODULE_DEVICE_TABLE(i2c, mic_cpld_4826_id);
++MODULE_DEVICE_TABLE(of, cpld_of_match);
++
++static struct i2c_driver mic_cpld_4826_driver = {
++    .driver = {
++        .name = "mic_cpld_4826",
++        .of_match_table = cpld_of_match,
++    },
++    .probe = mic_cpld_4826_probe,
++    .id_table = mic_cpld_4826_id,
++};
++
++module_i2c_driver(mic_cpld_4826_driver);
++
++MODULE_AUTHOR("Mitac Computing");
++MODULE_DESCRIPTION("Simple CPLD Driver for G4826 CPLDs");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/hwmon/mic-cpld-4826.h b/drivers/hwmon/mic-cpld-4826.h
+new file mode 100644
+index 000000000000..052fa44d38e4
+--- /dev/null
++++ b/drivers/hwmon/mic-cpld-4826.h
+@@ -0,0 +1,81 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#include <linux/types.h>
++#include <linux/mutex.h>
++#include <linux/gpio/driver.h>
++
++#define REG_PWM(ch) (0x31 + (ch))
++#define REG_TACH_1(ch) (0x11 + (ch))
++#define REG_TACH_2(ch) (0x21 + (ch))
++#define REG_LEAKAGE 0x08
++
++#define MAX_PWM_CHANNELS 16
++#define MAX_COOLING_LEVEL 5
++
++enum chips {
++	FAN_CTRL_ONLY,
++	CPLD_PDB,
++	CPLD_UBB,
++	CPLD_PCIE_BAY,
++	CPLD_HSBP,
++	CPLD_SW
++};
++
++struct GPIO_DEF_ENTRY {
++	u8 reg_id;
++	u8 output_mask;
++	u8 input_mask;
++};
++
++// For G4826-Z5 PDB CPLD
++const struct GPIO_DEF_ENTRY gpio_cfg_pdb[] = {
++	{ 0x08, 0x00, 0x03 },
++	{ 0x20, 0x00, 0xff },
++	{ 0x37, 0x07, 0xF8 },
++};
++
++// For G4826-Z5 UBB FCB CPLD.
++const struct GPIO_DEF_ENTRY gpio_cfg_ubb[] = {
++	{ 0x08, 0x00, 0x0f },
++};
++
++// For G4826-Z5 HSBP CPLD
++const struct GPIO_DEF_ENTRY gpio_cfg_hsbp[] = {
++	{ 0x00, 0x00, 0x1f }, // Drive 0
++	{ 0x01, 0x07, 0x00 }, { 0x02, 0x00, 0x1f }, // Drive 1
++	{ 0x03, 0x07, 0x00 }, { 0x04, 0x00, 0x1f }, // Drive 2
++	{ 0x05, 0x07, 0x00 }, { 0x06, 0x00, 0x1f }, // Drive 3
++	{ 0x07, 0x07, 0x00 }, { 0x08, 0x00, 0x1f }, // Drive 4
++	{ 0x09, 0x07, 0x00 }, { 0x0a, 0x00, 0x1f }, // Drive 5
++	{ 0x0b, 0x07, 0x00 }, { 0x0c, 0x00, 0x1f }, // Drive 6
++	{ 0x0d, 0x07, 0x00 }, { 0x0e, 0x00, 0x1f }, // Drive 7
++	{ 0x0f, 0x07, 0x00 },
++};
++
++struct cpld_pwm_port {
++	struct mic_cpld_4826_data *priv;
++	struct thermal_cooling_device *cdev;
++	u32 channel;
++	u32 *cooling_levels;
++	int num_levels;
++	unsigned long cur_state;
++};
++
++struct mic_cpld_4826_data {
++	enum chips chip_id;
++	struct i2c_client *client;
++	struct mutex lock;
++
++	// Reg Setting
++
++	// Properties for GPIO Control
++	struct gpio_chip gpio_chip;
++	struct GPIO_DEF_ENTRY *gpio_cfg;
++	size_t gpio_port_num;
++
++	// Properties for Fan Control
++	bool enable_hwmon;
++	struct device *hwmon_dev;
++
++	// Properties for Thermal Cooling Device
++	struct cpld_pwm_port pwm_ports[MAX_PWM_CHANNELS];
++};
+-- 
+2.43.0
+

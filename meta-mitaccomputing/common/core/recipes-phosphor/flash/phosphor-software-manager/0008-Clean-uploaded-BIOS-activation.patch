@@ -1,0 +1,294 @@
+From 95528f8b1620af16c93745f44eca4b8358a98aa8 Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Mon, 13 Jul 2026 05:55:08 +0000
+Subject: [PATCH] Clean uploaded BIOS activation
+
+The original design may cause the filesystem to become completely full
+after multiple BIOS updates because old BIOS image files
+in the /tmp/images/ directory are not removed.
+
+Refer to the community implementations in commits
+5f1346aff2a3f7bf2cec0cea7e24b9f9acb3a8f2 and 6397c09454cdd43bf901669496763af12c5978b5
+to make the following changes.
+
+Clean the uploaded activation after BIOS update completion and after
+selected activation failure paths.  For failures, set Activation=Failed
+before scheduling cleanup so Redfish task monitoring can observe the
+failed state.
+
+Test:
+Regardless of whether the BIOS update succeeds or fails,
+no stale image should remain in either the D-Bus object path or the /tmp/images directory
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ bmc/activation.cpp     | 41 ++++++++++++++++++++++++++---------------
+ bmc/activation.hpp     | 23 +++++++++++++++++++----
+ bmc/item_updater.cpp   | 17 +++++++++++++----
+ bmc/software_utils.cpp |  9 +++------
+ bmc/software_utils.hpp |  4 ----
+ 5 files changed, 61 insertions(+), 33 deletions(-)
+
+diff --git a/bmc/activation.cpp b/bmc/activation.cpp
+index 498bae2..28729f8 100644
+--- a/bmc/activation.cpp
++++ b/bmc/activation.cpp
+@@ -6,8 +6,6 @@
+ #include "redfish_log.hpp"
+ #include "serialize.hpp"
+ 
+-#include <boost/asio/io_context.hpp>
+-#include <boost/asio/post.hpp>
+ #include <phosphor-logging/elog-errors.hpp>
+ #include <phosphor-logging/elog.hpp>
+ #include <phosphor-logging/lg2.hpp>
+@@ -16,13 +14,12 @@
+ #include <xyz/openbmc_project/Software/Version/error.hpp>
+ 
+ #include <fstream>
++#include <utility>
+ 
+ #ifdef WANT_SIGNATURE_VERIFY
+ #include "image_verify.hpp"
+ #endif
+ 
+-extern boost::asio::io_context& getIOContext();
+-
+ namespace phosphor
+ {
+ namespace software
+@@ -129,6 +126,26 @@ void Activation::redfishLog(const std::string& id, const std::string& message,
+     redfish::firmwareUpdate(id, target, version, message);
+ }
+ 
++void Activation::scheduleUploadActivationCleanup()
++{
++    auto id = versionId;
++    auto& itemUpdater = parent;
++
++    ctx.spawn([](auto& parent, auto id) -> sdbusplus::async::task<> {
++        parent.erase(id);
++        co_return;
++    }(itemUpdater, std::move(id)));
++}
++
++auto Activation::setFailedAndCleanupUpload() -> Activations
++{
++    auto failedState =
++        Activation::activation(softwareServer::Activation::Activations::Failed);
++    scheduleUploadActivationCleanup();
++
++    return failedState;
++}
++
+ auto Activation::activation(Activations value) -> Activations
+ {
+     if ((value != softwareServer::Activation::Activations::Active) &&
+@@ -160,8 +177,7 @@ auto Activation::activation(Activations value) -> Activations
+         if (!minimum_ship_level::verify(versionStr))
+         {
+             redfishLog("FirmwareUpdateFailed", "Version too low to update");
+-            return softwareServer::Activation::activation(
+-                softwareServer::Activation::Activations::Failed);
++            return setFailedAndCleanupUpload();
+         }
+ 
+         if (!activationProgress)
+@@ -174,8 +190,7 @@ auto Activation::activation(Activations value) -> Activations
+         {
+             redfishLog("FirmwareUpdateFailed",
+                        "A firmware update is in progress");
+-            return softwareServer::Activation::activation(
+-                softwareServer::Activation::Activations::Failed);
++            return setFailedAndCleanupUpload();
+         }
+ 
+         if (!activationBlocksTransition)
+@@ -511,18 +526,14 @@ void Activation::onStateChangesBios(sdbusplus::message_t& msg)
+             parent.biosVersion->version(
+                 parent.versions.find(versionId)->second->version());
+ 
+-            // Delete the uploaded activation
+-            boost::asio::post(getIOContext(), [this]() {
+-                this->parent.erase(this->versionId);
+-            });
++            scheduleUploadActivationCleanup();
+         }
+         else if (newStateResult == "failed")
+         {
+-            // Set Activation value to Failed
+-            activation(softwareServer::Activation::Activations::Failed);
+-
+             error("Bios upgrade failed.");
+             redfishLog("FirmwareUpdateFailed", "Firmware update failed");
++
++            setFailedAndCleanupUpload();
+         }
+     }
+ 
+diff --git a/bmc/activation.hpp b/bmc/activation.hpp
+index fd93236..a763956 100644
+--- a/bmc/activation.hpp
++++ b/bmc/activation.hpp
+@@ -7,6 +7,7 @@
+ #include "xyz/openbmc_project/Software/ActivationProgress/server.hpp"
+ #include "xyz/openbmc_project/Software/RedundancyPriority/server.hpp"
+ 
++#include <sdbusplus/async.hpp>
+ #include <sdbusplus/server.hpp>
+ #include <xyz/openbmc_project/Association/Definitions/server.hpp>
+ #include <xyz/openbmc_project/Software/Activation/server.hpp>
+@@ -186,21 +187,22 @@ class Activation : public ActivationInherit, public Flash
+   public:
+     /** @brief Constructs Activation Software Manager
+      *
+-     * @param[in] bus    - The Dbus bus object
++     * @param[in] ctx    - The Dbus async context
+      * @param[in] path   - The Dbus object path
+      * @param[in] parent - Parent object.
+      * @param[in] versionId  - The software version id
+      * @param[in] activationStatus - The status of Activation
+      * @param[in] assocs - Association objects
+      */
+-    Activation(sdbusplus::bus_t& bus, const std::string& path,
++    Activation(sdbusplus::async::context& ctx, const std::string& path,
+                ItemUpdater& parent, std::string& versionId,
+                sdbusplus::server::xyz::openbmc_project::software::Activation::
+                    Activations activationStatus,
+                AssociationList& assocs) :
+-        ActivationInherit(bus, path.c_str(),
++        ActivationInherit(ctx.get_bus(), path.c_str(),
+                           ActivationInherit::action::defer_emit),
+-        bus(bus), path(path), parent(parent), versionId(versionId),
++        ctx(ctx), bus(ctx.get_bus()), path(path), parent(parent),
++        versionId(versionId),
+         systemdSignals(
+             bus,
+             sdbusRule::type::signal() + sdbusRule::member("JobRemoved") +
+@@ -313,6 +315,16 @@ class Activation : public ActivationInherit, public Flash
+     void redfishLog(const std::string& id, const std::string& message,
+                     bool isBmcReboot = false);
+ 
++    /** @brief Schedule cleanup of the uploaded activation object. */
++    void scheduleUploadActivationCleanup();
++
++    /**
++     * @brief Set activation failed first, then schedule upload cleanup.
++     *
++     * @return The updated activation state.
++     **/
++    Activations setFailedAndCleanupUpload();
++
+     /**
+      * @brief Checks if there is any firmware update currently in progress.
+      *
+@@ -322,6 +334,9 @@ class Activation : public ActivationInherit, public Flash
+     bool hasFirmwareUpdateInProgress();
+ 
+   public:
++    /** @brief D-Bus context */
++    sdbusplus::async::context& ctx;
++
+     /** @brief Persistent sdbusplus DBus bus connection */
+     sdbusplus::bus_t& bus;
+ 
+diff --git a/bmc/item_updater.cpp b/bmc/item_updater.cpp
+index 046a114..1fb2bdb 100644
+--- a/bmc/item_updater.cpp
++++ b/bmc/item_updater.cpp
+@@ -151,7 +151,7 @@ void ItemUpdater::createActivationWithApplyTime(
+                         bmcInventoryPath));
+     activations.insert(std::make_pair(
+         id, std::make_unique<Activation>(
+-                bus, path, *this, id, server::Activation::Activations::NotReady,
++                ctx, path, *this, id, server::Activation::Activations::NotReady,
+                 associations)));
+     activations[id]->applyTime = applyTime;
+ }
+@@ -196,7 +196,7 @@ ActivationIntf::Activations ItemUpdater::verifyAndCreateObjects(
+     if (activation == activations.end())
+     {
+         activations.insert(std::make_pair(
+-            id, std::make_unique<Activation>(bus, path, *this, id,
++            id, std::make_unique<Activation>(ctx, path, *this, id,
+                                              activationState, associations)));
+     }
+     else
+@@ -398,7 +398,7 @@ void ItemUpdater::processBMCImage()
+             // Create Activation instance for this version.
+             activations.insert(std::make_pair(
+                 id, std::make_unique<Activation>(
+-                        bus, path, *this, id, activationState, associations)));
++                        ctx, path, *this, id, activationState, associations)));
+ 
+ #ifdef BMC_STATIC_DUAL_IMAGE
+             uint8_t priority;
+@@ -539,6 +539,15 @@ void ItemUpdater::erase(std::string entryId)
+             removePersistDataDirectory(flashId);
+             helper.clearEntry(flashId);
+         }
++        else if (useUpdateDBusInterface)
++        {
++            fs::path imageDirPath = flashId;
++            if (fs::exists(imageDirPath))
++            {
++                info("Erasing image temporary folder {ID}", "ID", flashId);
++                fs::remove_all(imageDirPath);
++            }
++        }
+ 
+         // Removing entry in versions map
+         this->versions.erase(entryId);
+@@ -1002,7 +1011,7 @@ void ItemUpdater::createBIOSObject()
+     auto version = "null";
+     AssociationList assocs;
+     biosActivation = std::make_unique<Activation>(
+-        bus, path, *this, versionId, server::Activation::Activations::Active,
++        ctx, path, *this, versionId, server::Activation::Activations::Active,
+         assocs);
+     auto dummyErase = [](const std::string& /*entryId*/) {
+         // Do nothing;
+diff --git a/bmc/software_utils.cpp b/bmc/software_utils.cpp
+index aeeaeb7..38005cd 100644
+--- a/bmc/software_utils.cpp
++++ b/bmc/software_utils.cpp
+@@ -1,5 +1,8 @@
+ #include "software_utils.hpp"
+ 
++#include <sys/types.h>
++#include <unistd.h>
++
+ #include <phosphor-logging/lg2.hpp>
+ 
+ PHOSPHOR_LOG2_USING;
+@@ -56,9 +59,3 @@ bool unTar(int imageFd, const std::string& extractDirPath)
+ }
+ 
+ } // namespace phosphor::software::utils
+-
+-boost::asio::io_context& getIOContext()
+-{
+-    static boost::asio::io_context io;
+-    return io;
+-}
+diff --git a/bmc/software_utils.hpp b/bmc/software_utils.hpp
+index 5cfbd54..6d96b72 100644
+--- a/bmc/software_utils.hpp
++++ b/bmc/software_utils.hpp
+@@ -1,7 +1,5 @@
+ #pragma once
+ 
+-#include <boost/asio/io_context.hpp>
+-
+ #include <filesystem>
+ 
+ namespace phosphor::software::utils
+@@ -38,5 +36,3 @@ struct RemovablePath
+ bool unTar(int imageFd, const std::string& extractDirPath);
+ 
+ } // namespace phosphor::software::utils
+-
+-boost::asio::io_context& getIOContext();
+-- 
+2.43.0
+

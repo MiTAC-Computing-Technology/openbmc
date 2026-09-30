@@ -4,10 +4,9 @@ inherit packagegroup
 
 RDEPENDS:${PN} = " \
     i2c-tools \
-    amd-apml \
-    amd-dimm \
-    amd-ras  \
-    cpu-info \
     i3c-tools \
-    power-capping \
+    amd-apml \
+    amd-ras \
+    cpu-info \
+    powercap-monitor \
 "

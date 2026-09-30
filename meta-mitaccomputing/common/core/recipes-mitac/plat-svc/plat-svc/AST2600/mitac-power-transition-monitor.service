@@ -1,6 +1,8 @@
 [Unit]
 Description=Mitac Power State Transition Monitor
 After=mitac-sys-init.service
+Requires=xyz.openbmc_project.Chassis.Control.Power@0.service
+After=xyz.openbmc_project.Chassis.Control.Power@0.service
 
 [Service]
 Type=simple

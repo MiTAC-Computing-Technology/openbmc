@@ -1,0 +1,49 @@
+From: "spencer.tsai" <spencer.tsai@mitaccomputing.com>
+Date: Thu, 6 Aug 2026 15:10:00 +0800
+Subject: [PATCH] Avoid GCC 14 LTO stringop-overflow on path concat
+
+GCC 14 with -flto and -Werror false-positives on chained
+std::string operator+ when building D-Bus object paths:
+
+  std::string{SOFTWARE_OBJPATH} + '/' + id
+
+Rewrite with append to avoid the LTO SSO overflow diagnostic.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ bmc/image_manager.cpp  | 4 +++-
+ bmc/update_manager.cpp | 4 +++-
+ 2 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/bmc/image_manager.cpp b/bmc/image_manager.cpp
+index a7687c633..2cbe7445c 100644
+--- a/bmc/image_manager.cpp
++++ b/bmc/image_manager.cpp
+@@ -207,7 +207,9 @@ int Manager::processImage(const std::string& tarFilePath)
+     fs::path imageDirPath = std::string{IMG_UPLOAD_DIR};
+     imageDirPath /= id;
+ 
+-    auto objPath = std::string{SOFTWARE_OBJPATH} + '/' + id;
++    std::string objPath{SOFTWARE_OBJPATH};
++    objPath += '/';
++    objPath += id;
+ 
+     // This service only manages the uploaded versions, and there could be
+     // active versions on D-Bus that is not managed by this service.
+diff --git a/bmc/update_manager.cpp b/bmc/update_manager.cpp
+index 1ee8dd237..e445b42d4 100644
+--- a/bmc/update_manager.cpp
++++ b/bmc/update_manager.cpp
+@@ -265,7 +265,9 @@ sdbusplus::message::object_path Manager::startUpdateImpl(
+     updateInProgress = true;
+ 
+     auto id = Version::getId(std::to_string(randomGen()));
+-    auto objPath = std::string{SOFTWARE_OBJPATH} + '/' + id;
++    std::string objPath{SOFTWARE_OBJPATH};
++    objPath += '/';
++    objPath += id;
+ 
+     // Create Activation Object
+     itemUpdater.createActivationWithApplyTime(id, objPath, applyTime,
+-- 
+2.43.0

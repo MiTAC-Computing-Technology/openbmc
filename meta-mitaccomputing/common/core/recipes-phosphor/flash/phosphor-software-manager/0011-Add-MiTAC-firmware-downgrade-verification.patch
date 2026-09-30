@@ -1,0 +1,479 @@
+From ad300c0dbdac08d9267fed54c9e58c5b031ca0ed Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Fri, 14 Aug 2026 01:58:21 +0000
+Subject: [PATCH] Add MiTAC firmware downgrade verification
+
+Add MiTAC minimum ship level verification to the firmware activation
+flow.
+
+Support NONE, VER, and DATE downgrade policies from the image
+MANIFEST. Compare BMC and BIOS firmware versions.
+
+| Manifest Setting       | Purpose  | Verification                                                                          | Result                                     |
+|------------------------|----------|---------------------------------------------------------------------------------------|--------------------------------------------|
+| Field missing or empty | Any      | Do not perform downgrade verification                                                 | Success                                    |
+| NONE                   | BMC/BIOS | Compare the target version with the current version                                   | Failure when target < current              |
+| VER:<version>          | BMC/BIOS | Both current and target must be greater than or equal to the minimum                  | Failure when either value is < minimum     |
+| DATE:yyyymmdd          | BMC only | Both current and target build dates must be greater than or equal to the minimum date | Failure when either date is < minimum date |
+| Any other value        | Any      | Treat as an invalid format                                                            | Failure                                    |
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ bmc/activation.cpp       |   9 +
+ bmc/meson.build          |   1 +
+ bmc/mitac_msl_verify.cpp | 375 +++++++++++++++++++++++++++++++++++++++
+ bmc/mitac_msl_verify.hpp |  21 +++
+ 4 files changed, 406 insertions(+)
+ create mode 100644 bmc/mitac_msl_verify.cpp
+ create mode 100644 bmc/mitac_msl_verify.hpp
+
+diff --git a/bmc/activation.cpp b/bmc/activation.cpp
+index a0fc4e3..6d154af 100644
+--- a/bmc/activation.cpp
++++ b/bmc/activation.cpp
+@@ -24,6 +24,7 @@
+ #ifdef WANT_MITAC_SIGNATURE_VERIFY
+ #include "mitac_image_verify.hpp"
+ #endif
++#include "mitac_msl_verify.hpp"
+ 
+ namespace phosphor
+ {
+@@ -211,6 +212,14 @@ auto Activation::activation(Activations value) -> Activations
+             return setFailedAndCleanupUpload();
+         }
+ 
++        const auto verification =
++            mitac_minimum_ship_level::verify(parent, versionId);
++        if (!verification)
++        {
++            redfishLog("FirmwareUpdateFailed", verification.error());
++            return setFailedAndCleanupUpload();
++        }
++
+         if (!activationProgress)
+         {
+             activationProgress =
+diff --git a/bmc/meson.build b/bmc/meson.build
+index 48b431d..e5b11af 100644
+--- a/bmc/meson.build
++++ b/bmc/meson.build
+@@ -114,6 +114,7 @@ image_updater_sources = files(
+     'boot_reason_marker.cpp',
+     'images.cpp',
+     'item_updater.cpp',
++    'mitac_msl_verify.cpp',
+     'msl_verify.cpp',
+     'serialize.cpp',
+     'update_manager.cpp',
+diff --git a/bmc/mitac_msl_verify.cpp b/bmc/mitac_msl_verify.cpp
+new file mode 100644
+index 0000000..d4c5f52
+--- /dev/null
++++ b/bmc/mitac_msl_verify.cpp
+@@ -0,0 +1,375 @@
++#include "config.h"
++
++#include "mitac_msl_verify.hpp"
++
++#include "item_updater.hpp"
++
++#include <phosphor-logging/lg2.hpp>
++
++#include <algorithm>
++#include <chrono>
++#include <compare>
++#include <cstdint>
++#include <limits>
++#include <optional>
++#include <regex>
++#include <stdexcept>
++#include <string_view>
++#include <utility>
++
++namespace mitac_minimum_ship_level
++{
++
++namespace
++{
++
++using VersionClass = phosphor::software::manager::Version;
++using VersionPurpose = VersionClass::VersionPurpose;
++using ItemUpdater = phosphor::software::updater::ItemUpdater;
++
++struct FirmwareVersion
++{
++    uint8_t major{};
++    uint8_t minor{};
++    uint8_t patch{};
++    uint8_t build{};
++
++    auto operator<=>(const FirmwareVersion&) const = default;
++
++    static std::optional<FirmwareVersion> parse(const VersionPurpose purpose,
++                                                const std::string& inputVersion)
++    {
++        std::smatch match;
++        FirmwareVersion outputVersion{};
++
++        if (purpose == VersionPurpose::BMC)
++        {
++            static const std::regex bmcVersionRegex{
++                R"(^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)(-|$))"};
++            if (!std::regex_search(inputVersion, match, bmcVersionRegex))
++            {
++                lg2::error("Unable to parse BMC version: {VERSION}", "VERSION",
++                           inputVersion);
++                return std::nullopt;
++            }
++        }
++        else if (purpose == VersionPurpose::Host)
++        {
++            static const std::regex biosVersionRegex{
++                R"(([0-9]{2})([0-9]{2})$)"};
++            if (!std::regex_search(inputVersion, match, biosVersionRegex))
++            {
++                lg2::error("Unable to parse BIOS version: {VERSION}", "VERSION",
++                           inputVersion);
++                return std::nullopt;
++            }
++        }
++        else
++        {
++            lg2::error("Unsupported version purpose: {PURPOSE}", "PURPOSE",
++                       VersionClass::convertVersionPurposeToString(purpose));
++            return std::nullopt;
++        }
++
++        try
++        {
++            const auto parseComponent = [&match](const std::size_t index) {
++                const auto value = std::stoul(match[index].str());
++                if (value > std::numeric_limits<uint8_t>::max())
++                {
++                    throw std::out_of_range(
++                        "Version component exceeds uint8_t");
++                }
++                return static_cast<uint8_t>(value);
++            };
++
++            outputVersion.major = parseComponent(1);
++            outputVersion.minor = parseComponent(2);
++            if (purpose == VersionPurpose::BMC)
++            {
++                outputVersion.patch = parseComponent(3);
++                outputVersion.build = parseComponent(4);
++            }
++        }
++        catch (const std::exception& error)
++        {
++            lg2::error("Unable to parse version {VERSION}: {ERROR}", "VERSION",
++                       inputVersion, "ERROR", error.what());
++            return std::nullopt;
++        }
++
++        return outputVersion;
++    }
++};
++
++struct BuildDate
++{
++    uint16_t year{};
++    uint8_t month{};
++    uint8_t day{};
++
++    auto operator<=>(const BuildDate&) const = default;
++
++    static std::optional<BuildDate> parse(const std::string_view date)
++    {
++        if (date.size() != 8 ||
++            !std::all_of(date.begin(), date.end(), [](const char character) {
++                return character >= '0' && character <= '9';
++            }))
++        {
++            return std::nullopt;
++        }
++
++        const auto parseDigits = [](const std::string_view digits) {
++            unsigned int value = 0;
++            for (const char digit : digits)
++            {
++                value = value * 10 + static_cast<unsigned int>(digit - '0');
++            }
++            return value;
++        };
++
++        const auto year = parseDigits(date.substr(0, 4));
++        const auto month = parseDigits(date.substr(4, 2));
++        const auto day = parseDigits(date.substr(6, 2));
++        const std::chrono::year_month_day calendarDate{
++            std::chrono::year{static_cast<int>(year)},
++            std::chrono::month{month}, std::chrono::day{day}};
++        if (year == 0 || !calendarDate.ok())
++        {
++            return std::nullopt;
++        }
++
++        return BuildDate{static_cast<uint16_t>(year),
++                         static_cast<uint8_t>(month),
++                         static_cast<uint8_t>(day)};
++    }
++};
++
++template <typename Value>
++bool isDowngradeLocked(const Value& current, const Value& target,
++                       const std::optional<Value>& minimum)
++{
++    return minimum ? (current < *minimum || target < *minimum)
++                   : (target < current);
++}
++
++class MinimumShipLevelVerifier
++{
++  public:
++    MinimumShipLevelVerifier(ItemUpdater& parent, std::string manifestPath,
++                             const VersionPurpose purpose) :
++        parent(parent), manifestPath(std::move(manifestPath)), purpose(purpose)
++    {}
++
++    VerificationResult verify() const
++    {
++        const auto downgradeAllowedSince =
++            VersionClass::getValue(manifestPath, "DowngradeAllowedSince");
++        if (downgradeAllowedSince.empty())
++        {
++            lg2::warning(
++                "DowngradeAllowedSince is empty; skip downgrade verification");
++            return {};
++        }
++
++        if (downgradeAllowedSince == "NONE")
++        {
++            return verifyVersionPolicy(std::nullopt);
++        }
++
++        if (downgradeAllowedSince.starts_with("VER:"))
++        {
++            const auto minimumVersion = FirmwareVersion::parse(
++                purpose, downgradeAllowedSince.substr(4));
++            if (!minimumVersion)
++            {
++                return std::unexpected(
++                    std::string{"Invalid downgrade version format"});
++            }
++            return verifyVersionPolicy(minimumVersion);
++        }
++
++        if (downgradeAllowedSince.starts_with("DATE:") &&
++            purpose == VersionPurpose::BMC)
++        {
++            const auto minimumBuildDate =
++                BuildDate::parse(downgradeAllowedSince.substr(5));
++            if (!minimumBuildDate)
++            {
++                lg2::error("Invalid DowngradeAllowedSince value: {VALUE}",
++                           "VALUE", downgradeAllowedSince);
++                return std::unexpected(
++                    std::string{"Invalid downgrade date format"});
++            }
++            return verifyBuildDatePolicy(minimumBuildDate);
++        }
++
++        lg2::error("Invalid DowngradeAllowedSince value: {VALUE}", "VALUE",
++                   downgradeAllowedSince);
++        return std::unexpected(
++            std::string{"Invalid DowngradeAllowedSince format"});
++    }
++
++  private:
++    std::optional<FirmwareVersion> getCurrentVersion() const
++    {
++        std::string currentVersion;
++
++        if (purpose == VersionPurpose::BMC)
++        {
++            currentVersion = VersionClass::getBMCVersion(OS_RELEASE_FILE);
++        }
++#ifdef HOST_BIOS_UPGRADE
++        else if (purpose == VersionPurpose::Host)
++        {
++            if (!parent.biosVersion)
++            {
++                lg2::error("Current BIOS version object is unavailable");
++                return std::nullopt;
++            }
++            currentVersion = parent.biosVersion->version();
++        }
++#endif
++        else
++        {
++            lg2::error("Unsupported current version purpose: {PURPOSE}",
++                       "PURPOSE",
++                       VersionClass::convertVersionPurposeToString(purpose));
++            return std::nullopt;
++        }
++
++        return FirmwareVersion::parse(purpose, currentVersion);
++    }
++
++    std::optional<FirmwareVersion> getManifestVersion() const
++    {
++        return FirmwareVersion::parse(
++            purpose, VersionClass::getValue(manifestPath, "version"));
++    }
++
++    std::optional<BuildDate> getCurrentBmcBuildDate() const
++    {
++        auto buildId = VersionClass::getValue(OS_RELEASE_FILE, "BUILD_ID");
++        if (buildId.size() >= 2 && buildId.front() == '"' &&
++            buildId.back() == '"')
++        {
++            buildId = buildId.substr(1, buildId.size() - 2);
++        }
++
++        if (buildId.size() < 8)
++        {
++            lg2::error("Invalid current BMC BUILD_ID: {BUILD_ID}", "BUILD_ID",
++                       buildId);
++            return std::nullopt;
++        }
++
++        const auto buildDate =
++            BuildDate::parse(std::string_view{buildId}.substr(0, 8));
++        if (!buildDate)
++        {
++            lg2::error("Invalid current BMC BUILD_ID: {BUILD_ID}", "BUILD_ID",
++                       buildId);
++        }
++        return buildDate;
++    }
++
++    std::optional<BuildDate> getManifestBuildDate() const
++    {
++        const auto buildId = VersionClass::getValue(manifestPath, "BuildId");
++        if (buildId.size() < 8)
++        {
++            lg2::error("Invalid Manifest BuildId: {BUILD_ID}", "BUILD_ID",
++                       buildId);
++            return std::nullopt;
++        }
++
++        const auto buildDate =
++            BuildDate::parse(std::string_view{buildId}.substr(0, 8));
++        if (!buildDate)
++        {
++            lg2::error("Invalid Manifest BuildId: {BUILD_ID}", "BUILD_ID",
++                       buildId);
++        }
++        return buildDate;
++    }
++
++    VerificationResult verifyVersionPolicy(
++        const std::optional<FirmwareVersion>& minimumVersion) const
++    {
++        const auto manifestVersion = getManifestVersion();
++        if (!manifestVersion)
++        {
++            return std::unexpected(
++                std::string{"Invalid target version format"});
++        }
++
++        const auto currentVersion = getCurrentVersion();
++        if (!currentVersion)
++        {
++            lg2::warning(
++                "Current version is unavailable; skip downgrade verification");
++            return {};
++        }
++
++        if (isDowngradeLocked(*currentVersion, *manifestVersion,
++                              minimumVersion))
++        {
++            return std::unexpected(std::string{"Downgrade lock"});
++        }
++        return {};
++    }
++
++    VerificationResult verifyBuildDatePolicy(
++        const std::optional<BuildDate>& minimumBuildDate) const
++    {
++        const auto manifestBuildDate = getManifestBuildDate();
++        if (!manifestBuildDate)
++        {
++            return std::unexpected(
++                std::string{"Invalid target build date format"});
++        }
++
++        const auto currentBuildDate = getCurrentBmcBuildDate();
++        if (!currentBuildDate)
++        {
++            lg2::warning(
++                "Current BMC build date is unavailable; skip downgrade verification");
++            return {};
++        }
++
++        if (isDowngradeLocked(*currentBuildDate, *manifestBuildDate,
++                              minimumBuildDate))
++        {
++            return std::unexpected(std::string{"Downgrade lock"});
++        }
++        return {};
++    }
++
++    ItemUpdater& parent;
++    const std::string manifestPath;
++    const VersionPurpose purpose;
++};
++
++} // namespace
++
++VerificationResult verify(ItemUpdater& parent, const std::string& versionId)
++{
++    const auto version = parent.versions.find(versionId);
++    if (version == parent.versions.end())
++    {
++        lg2::error("Version ID not found in parent versions: {VERSION_ID}",
++                   "VERSION_ID", versionId);
++        return std::unexpected(
++            std::string{"Downgrade verification internal error"});
++    }
++
++    const auto manifestPath =
++        (std::filesystem::path{IMG_UPLOAD_DIR} / versionId / MANIFEST_FILE_NAME)
++            .string();
++    return MinimumShipLevelVerifier{parent, manifestPath,
++                                    version->second->purpose()}
++        .verify();
++}
++
++} // namespace mitac_minimum_ship_level
+diff --git a/bmc/mitac_msl_verify.hpp b/bmc/mitac_msl_verify.hpp
+new file mode 100644
+index 0000000..9572ca2
+--- /dev/null
++++ b/bmc/mitac_msl_verify.hpp
+@@ -0,0 +1,21 @@
++#pragma once
++
++#include <expected>
++#include <filesystem>
++#include <string>
++
++namespace phosphor::software::updater
++{
++class ItemUpdater;
++}
++
++namespace mitac_minimum_ship_level
++{
++
++using VerificationResult = std::expected<void, std::string>;
++
++[[nodiscard]] VerificationResult verify(
++    phosphor::software::updater::ItemUpdater& parent,
++    const std::string& versionId);
++
++} // namespace mitac_minimum_ship_level
+-- 
+2.43.0
+

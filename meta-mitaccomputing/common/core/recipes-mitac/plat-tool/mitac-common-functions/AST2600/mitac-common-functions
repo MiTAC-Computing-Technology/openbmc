@@ -131,6 +131,16 @@ disable_os_wdt()
     devmem $WDT2_BASE 32 $NEW_SETTING
 }
 
+setup_icmp_timestamp_firewall_rules()
+{
+    echo "Drop ICMP timestamp request/reply packets."
+    iptables -D INPUT  -p icmp --icmp-type timestamp-request -j DROP 2>/dev/null || true
+    iptables -D OUTPUT -p icmp --icmp-type timestamp-reply   -j DROP 2>/dev/null || true
+
+    iptables -A INPUT  -p icmp --icmp-type timestamp-request -j DROP
+    iptables -A OUTPUT -p icmp --icmp-type timestamp-reply   -j DROP
+}
+
 set_gpio()
 {
     local NET_NAME=$1
@@ -177,7 +187,7 @@ get_fru_dev()
         return 0
     fi
 
-    local FRU_BUS=(1 4)
+    local FRU_BUS=(1 4 10)
     for BUS in "${FRU_BUS[@]}"
     do
         FRU_DEVICE="/sys/bus/i2c/devices/$BUS-0050/eeprom"
@@ -256,4 +266,26 @@ launch_intel_common_service () {
     echo "Launch Intel common service."
     init_mctp_network_intel
     systemctl start mitac-mctp-engine-intel.service
+}
+
+init-ubb-network() {
+    echo "mainboard-init-functions: init-ubb-network"
+
+    for i in {1..10}; do
+        if ip link show eth-ubb > /dev/null 2>&1; then
+            echo "UBB interface (eth-ubb) is ready."
+            break
+        fi
+        sleep 1
+    done
+
+    echo 1 > /proc/sys/net/ipv4/ip_forward
+
+    iptables -t nat -D PREROUTING -p tcp --dport 8000 -j DNAT --to-destination 192.168.31.1:80 2>/dev/null || true
+    iptables -t nat -D POSTROUTING -p tcp -d 192.168.31.1 --dport 80 -j MASQUERADE 2>/dev/null || true
+
+    iptables -t nat -A PREROUTING -p tcp --dport 8000 -j DNAT --to-destination 192.168.31.1:80
+    iptables -t nat -A POSTROUTING -p tcp -d 192.168.31.1 --dport 80 -j MASQUERADE
+
+    echo "UBB iptables NAT setup completed successfully."
 }

@@ -1,0 +1,472 @@
+From 978ff1ae358f1325451d28aca4c3e69ca03e2d1a Mon Sep 17 00:00:00 2001
+From: "vincent.yen" <vincent.yen@mitaccomputing.com>
+Date: Thu, 6 Aug 2026 06:49:38 +0000
+Subject: [PATCH] Add redfish bmc boot reason event logging
+
+Track pending reboot reasons across BMC resets and report the final
+reboot cause through the D-Bus property and Redfish event log.
+
+Use /var/log/bmc_boot_reason_logged to distinguish firmware updates
+and cold reset commands from watchdog resets. Cache the detected
+reboot cause under /run/phosphor-state-manager after logging the
+event, so restarting phosphor-bmc-state-manager restores the same
+D-Bus property without generating a duplicate Redfish event.
+
+Upstream-Status: Inappropriate [No upstream maintenance]
+---
+ bmc_state_manager.cpp | 296 +++++++++++++++++++++++++++++++++++++++++-
+ bmc_state_manager.hpp |  51 ++++++++
+ 2 files changed, 346 insertions(+), 1 deletion(-)
+
+diff --git a/bmc_state_manager.cpp b/bmc_state_manager.cpp
+index faab43f..29e6377 100644
+--- a/bmc_state_manager.cpp
++++ b/bmc_state_manager.cpp
+@@ -11,9 +11,13 @@
+ #include <phosphor-logging/lg2.hpp>
+ #include <sdbusplus/exception.hpp>
+ 
++#include <array>
+ #include <filesystem>
++#include <format>
+ #include <fstream>
+ #include <iostream>
++#include <string_view>
++#include <utility>
+ 
+ namespace phosphor
+ {
+@@ -35,6 +39,163 @@ constexpr auto obmcStandbyTarget = "multi-user.target";
+ constexpr auto signalDone = "done";
+ constexpr auto activeState = "active";
+ 
++namespace
++{
++
++constexpr auto pendingBootReasonPath = "/var/log/bmc_boot_reason_logged";
++constexpr auto rebootCauseCachePath =
++    "/run/phosphor-state-manager/bmc_reboot_cause_cache";
++
++struct RebootCauseInfo
++{
++    server::BMC::RebootCause cause;
++    std::string_view cacheValue;
++    std::string_view redfishMessage;
++    std::string_view pendingReason;
++};
++
++constexpr RebootCauseInfo unknownRebootCauseInfo{
++    server::BMC::RebootCause::Unknown, "Unknown", "unknown reset", ""};
++
++constexpr std::array rebootCauseTable{
++    RebootCauseInfo{server::BMC::RebootCause::POR, "POR", "AC power applied",
++                    ""},
++    RebootCauseInfo{server::BMC::RebootCause::PinholeReset, "PinholeReset",
++                    "pinhole reset", ""},
++    RebootCauseInfo{server::BMC::RebootCause::Watchdog, "Watchdog",
++                    "watchdog reset", ""},
++    RebootCauseInfo{server::BMC::RebootCause::Software, "Software",
++                    "software reset", ""},
++    RebootCauseInfo{server::BMC::RebootCause::FirmwareUpdate, "FirmwareUpdate",
++                    "firmware update", "firmware update"},
++    RebootCauseInfo{server::BMC::RebootCause::ColdResetCommand,
++                    "ColdResetCommand", "cold reset command",
++                    "cold reset command"},
++    unknownRebootCauseInfo,
++};
++
++constexpr const RebootCauseInfo& getRebootCauseInfo(
++    const server::BMC::RebootCause cause)
++{
++    for (const auto& info : rebootCauseTable)
++    {
++        if (info.cause == cause)
++        {
++            return info;
++        }
++    }
++
++    return unknownRebootCauseInfo;
++}
++
++constexpr const RebootCauseInfo* findRebootCauseByCacheValue(
++    const std::string_view value)
++{
++    for (const auto& info : rebootCauseTable)
++    {
++        if (info.cacheValue == value)
++        {
++            return &info;
++        }
++    }
++
++    return nullptr;
++}
++
++constexpr const RebootCauseInfo* findRebootCauseByPendingReason(
++    const std::string_view reason)
++{
++    for (const auto& info : rebootCauseTable)
++    {
++        if (!info.pendingReason.empty() && info.pendingReason == reason)
++        {
++            return &info;
++        }
++    }
++
++    return nullptr;
++}
++
++std::optional<std::string> readNonEmptyFirstLine(
++    const std::filesystem::path& path)
++{
++    std::error_code ec;
++    const bool fileExists = std::filesystem::exists(path, ec);
++    if (ec)
++    {
++        error("Failed to check {FILE}: {ERROR}", "FILE", path.c_str(), "ERROR",
++              ec.message());
++        return std::nullopt;
++    }
++    if (!fileExists)
++    {
++        return std::nullopt;
++    }
++
++    std::ifstream file(path);
++    if (!file)
++    {
++        error("Failed to open {FILE}", "FILE", path.c_str());
++        return std::nullopt;
++    }
++
++    std::string content;
++    if (!std::getline(file, content))
++    {
++        if (file.eof())
++        {
++            error("Empty content in {FILE}", "FILE", path.c_str());
++        }
++        else
++        {
++            error("Failed to read {FILE}", "FILE", path.c_str());
++        }
++        return std::nullopt;
++    }
++
++    if (content.empty())
++    {
++        error("Empty content in {FILE}", "FILE", path.c_str());
++        return std::nullopt;
++    }
++
++    return content;
++}
++
++bool writeTextFile(const std::filesystem::path& path,
++                   const std::string_view content)
++{
++    std::ofstream file(path, std::ios::out | std::ios::trunc);
++    if (!file)
++    {
++        error("Failed to create {FILE}", "FILE", path.c_str());
++        return false;
++    }
++
++    file << content;
++    file.close();
++    if (!file)
++    {
++        error("Failed to write {FILE}", "FILE", path.c_str());
++        return false;
++    }
++
++    return true;
++}
++
++void removeFile(const std::filesystem::path& path)
++{
++    std::error_code ec;
++    std::filesystem::remove(path, ec);
++    if (ec)
++    {
++        error("Failed to remove {FILE}: {ERROR}", "FILE", path.c_str(), "ERROR",
++              ec.message());
++    }
++}
++
++} // namespace
++
+ /* Map a transition to it's systemd target */
+ const std::map<server::BMC::Transition, const char*> SYSTEMD_TABLE = {
+     {server::BMC::Transition::Reboot, "reboot.target"}};
+@@ -136,6 +297,7 @@ void BMC::executeTransition(const Transition tranReq)
+         catch (const sdbusplus::exception_t& e)
+         {
+             info("Error in HardReboot: {ERROR}", "ERROR", e);
++            removePendingBootReason();
+         }
+     }
+     else
+@@ -169,6 +331,7 @@ void BMC::executeTransition(const Transition tranReq)
+         {
+             info("Error in StartUnit - replace-irreversibly: {ERROR}", "ERROR",
+                  e);
++            removePendingBootReason();
+         }
+     }
+     return;
+@@ -238,6 +401,13 @@ BMC::Transition BMC::requestedBMCTransition(Transition value)
+     }
+ #endif // CHECK_FWUPDATE_BEFORE_DO_TRANSITION
+ 
++    const bool isReboot = value == Transition::Reboot ||
++                          value == Transition::HardReboot;
++    if (isReboot && !writePendingBootReason("cold reset command"))
++    {
++        removePendingBootReason();
++    }
++
+     executeTransition(value);
+     return server::BMC::requestedBMCTransition(value);
+ }
+@@ -278,8 +448,113 @@ uint64_t BMC::lastRebootTime() const
+     return rebootTime;
+ }
+ 
++std::string BMC::getBMCVersion()
++{
++    constexpr std::string_view versionKey = "VERSION_ID=";
++    std::ifstream file("/etc/os-release");
++    std::string line;
++
++    while (std::getline(file, line))
++    {
++        if (line.compare(0, versionKey.size(), versionKey.data()) == 0)
++        {
++            auto version = line.substr(versionKey.size());
++            if (version.size() >= 2 && version.front() == '"' &&
++                version.back() == '"')
++            {
++                version = version.substr(1, version.size() - 2);
++            }
++            return version;
++        }
++    }
++
++    return {};
++}
++
++void BMC::logRedfishBootReason(const std::string& message) const
++{
++    const std::string msgId = "OpenBMC.0.5.BMCBootReason";
++    const auto msgArgs = std::format("{},{}", bmcVersion, message);
++
++    info("{LOG_MSG}", "LOG_MSG", message, "REDFISH_MESSAGE_ID", msgId,
++         "REDFISH_MESSAGE_ARGS", msgArgs);
++}
++
++bool BMC::writePendingBootReason(const std::string& reason) const
++{
++    return writeTextFile(pendingBootReasonPath, reason);
++}
++
++void BMC::removePendingBootReason() const
++{
++    removeFile(pendingBootReasonPath);
++}
++
++std::optional<std::string> BMC::consumePendingBootReason() const
++{
++    auto loggedReason = readNonEmptyFirstLine(pendingBootReasonPath);
++    removePendingBootReason();
++    return loggedReason;
++}
++
++std::optional<BMC::RebootCause> BMC::readCachedRebootCause() const
++{
++    const auto cause = readNonEmptyFirstLine(rebootCauseCachePath);
++    if (!cause)
++    {
++        removeFile(rebootCauseCachePath);
++        return std::nullopt;
++    }
++
++    if (const auto* info = findRebootCauseByCacheValue(*cause))
++    {
++        return info->cause;
++    }
++
++    error("Invalid reboot cause {CAUSE} in {FILE}", "CAUSE", *cause, "FILE",
++          rebootCauseCachePath);
++    removeFile(rebootCauseCachePath);
++    return std::nullopt;
++}
++
++void BMC::writeCachedRebootCause(const RebootCause rebootCause) const
++{
++    const auto& info = getRebootCauseInfo(rebootCause);
++    const std::filesystem::path markerPath{rebootCauseCachePath};
++    std::error_code ec;
++    std::filesystem::create_directories(markerPath.parent_path(), ec);
++    if (ec)
++    {
++        error("Failed to create directory for {FILE}: {ERROR}", "FILE",
++              rebootCauseCachePath, "ERROR", ec.message());
++        return;
++    }
++
++    writeTextFile(markerPath, info.cacheValue);
++}
++
++void BMC::updateRedfishEventLog()
++{
++    if (readCachedRebootCause())
++    {
++        return;
++    }
++
++    const auto rebootCause = server::BMC::lastRebootCause();
++    const auto& info = getRebootCauseInfo(rebootCause);
++    logRedfishBootReason(std::string(info.redfishMessage));
++    writeCachedRebootCause(info.cause);
++}
++
+ void BMC::discoverLastRebootCause()
+ {
++    const auto savedCause = readCachedRebootCause();
++    if (savedCause)
++    {
++        this->lastRebootCause(*savedCause);
++        return;
++    }
++
+     uint64_t bootReason = 0;
+     std::ifstream file;
+     const auto* bootstatusPath = "/sys/class/watchdog/watchdog0/bootstatus";
+@@ -302,12 +577,31 @@ void BMC::discoverLastRebootCause()
+     switch (bootReason)
+     {
+         case WDIOF_EXTERN1:
++            removePendingBootReason();
+             this->lastRebootCause(RebootCause::Software);
+             return;
+         case WDIOF_CARDRESET:
+-            this->lastRebootCause(RebootCause::Watchdog);
++        {
++            auto rebootCause = RebootCause::Watchdog;
++            const auto pendingReason = consumePendingBootReason();
++            if (pendingReason)
++            {
++                if (const auto* info =
++                        findRebootCauseByPendingReason(*pendingReason))
++                {
++                    rebootCause = info->cause;
++                }
++                else
++                {
++                    error("Invalid reboot cause {CAUSE} in {FILE}", "CAUSE",
++                          *pendingReason, "FILE", pendingBootReasonPath);
++                }
++            }
++            this->lastRebootCause(rebootCause);
+             return;
++        }
+         default:
++            removePendingBootReason();
+             this->lastRebootCause(RebootCause::POR);
+             // Continue below to see if more details can be found
+             // on reason for reboot
+diff --git a/bmc_state_manager.hpp b/bmc_state_manager.hpp
+index 50d25f1..868c542 100644
+--- a/bmc_state_manager.hpp
++++ b/bmc_state_manager.hpp
+@@ -10,6 +10,8 @@
+ 
+ #include <cassert>
+ #include <chrono>
++#include <optional>
++#include <string>
+ 
+ namespace phosphor
+ {
+@@ -38,6 +40,7 @@ class BMC : public BMCInherit
+      */
+     BMC(sdbusplus::bus_t& bus, const char* objPath) :
+         BMCInherit(bus, objPath, BMCInherit::action::defer_emit), bus(bus),
++        bmcVersion(getBMCVersion()),
+         stateSignal(std::make_unique<decltype(stateSignal)::element_type>(
+             bus,
+             sdbusRule::type::signal() + sdbusRule::member("JobRemoved") +
+@@ -72,6 +75,7 @@ class BMC : public BMCInherit
+         discoverInitialState();
+         discoverLastRebootCause();
+         updateLastRebootTime();
++        updateRedfishEventLog();
+ 
+         this->emit_object_added();
+     };
+@@ -124,6 +128,9 @@ class BMC : public BMCInherit
+     /** @brief Persistent sdbusplus DBus bus connection. **/
+     sdbusplus::bus_t& bus;
+ 
++    /** @brief The running BMC firmware version. **/
++    const std::string bmcVersion;
++
+     /** @brief Used to subscribe to dbus system state changes **/
+     std::unique_ptr<sdbusplus::bus::match_t> stateSignal;
+ 
+@@ -140,6 +147,50 @@ class BMC : public BMCInherit
+      **/
+     void updateLastRebootTime();
+ 
++    /**
++     * @brief Log the last reboot cause for the Redfish event log
++     **/
++    void updateRedfishEventLog();
++
++    /**
++     * @brief Create a Redfish event log for the BMC boot reason
++     *
++     * @param[in] message - The BMC boot reason
++     **/
++    void logRedfishBootReason(const std::string& message) const;
++
++    /**
++     * @brief Write a pending BMC boot reason
++     *
++     * @param[in] reason - The pending BMC boot reason
++     *
++     * @return true if the marker was written successfully
++     */
++    bool writePendingBootReason(const std::string& reason) const;
++
++    /**
++     * @brief Read and remove the pending BMC boot reason
++     *
++     * @return The boot reason when the marker contains a non-empty first line
++     */
++    std::optional<std::string> consumePendingBootReason() const;
++
++    /** @brief Remove the pending BMC boot reason. **/
++    void removePendingBootReason() const;
++
++    /**
++     * @brief Read the cached reboot cause
++     *
++     * @return The saved reboot cause, or nullopt if none is saved
++     */
++    std::optional<RebootCause> readCachedRebootCause() const;
++
++    /** @brief Cache the reboot cause after logging the boot reason event. **/
++    void writeCachedRebootCause(RebootCause rebootCause) const;
++
++    /** @brief Read the running BMC firmware version. **/
++    static std::string getBMCVersion();
++
+     /**
+      * @brief the lastRebootTime calculated at startup.
+      **/
+-- 
+2.43.0
+
